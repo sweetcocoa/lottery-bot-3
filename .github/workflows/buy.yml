@@ -42,10 +42,11 @@ jobs:
         if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
         run: |
           docker run --rm \
+            -e PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
             -v "$PWD:/app" \
             -w /app \
             lottery-bot-ci:latest \
-            npm install --no-fund --no-audit
+            npm ci --no-fund --no-audit
       - name: Run buy command
         run: |
           docker run --rm \
@@ -53,6 +54,7 @@ jobs:
             -e GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
             -e GITHUB_RUN_ID="${GITHUB_RUN_ID}" \
             -e GITHUB_TOKEN="${GITHUB_TOKEN}" \
+            -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
             -e DHLOTTERY_USERNAME \
             -e DHLOTTERY_PASSWORD \
             -e TELEGRAM_BOT_TOKEN \

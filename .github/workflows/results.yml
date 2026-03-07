@@ -43,10 +43,11 @@ jobs:
         if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
         run: |
           docker run --rm \
+            -e PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
             -v "$PWD:/app" \
             -w /app \
             lottery-bot-ci:latest \
-            npm install --no-fund --no-audit
+            npm ci --no-fund --no-audit
       - name: Download latest purchase artifact
         if: ${{ github.event_name == 'schedule' || inputs.artifact_source == 'github' }}
         env:
@@ -60,6 +61,7 @@ jobs:
         run: |
           docker run --rm \
             -e GITHUB_ACTIONS=true \
+            -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
             -e TELEGRAM_BOT_TOKEN \
             -e TELEGRAM_CHAT_ID \
             -v "$PWD:/app" \
