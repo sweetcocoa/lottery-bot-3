@@ -1,0 +1,70 @@
+name: Buy Lottery
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run mode
+        required: false
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - live
+      force:
+        description: Ignore existing purchase record
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  buy:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      DOCKER_API_VERSION: "1.41"
+      DHLOTTERY_USERNAME: ${{ secrets.DHLOTTERY_USERNAME }}
+      DHLOTTERY_PASSWORD: ${{ secrets.DHLOTTERY_PASSWORD }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CI image
+        run: DOCKER_BUILDKIT=0 docker build -f Dockerfile.ci -t lottery-bot-ci:latest .
+      - name: Ensure artifacts dir
+        run: mkdir -p artifacts
+      - name: Install live dependencies
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/app" \
+            -w /app \
+            lottery-bot-ci:latest \
+            npm install --no-fund --no-audit
+      - name: Run buy command
+        run: |
+          docker run --rm \
+            -e GITHUB_ACTIONS=true \
+            -e GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
+            -e GITHUB_RUN_ID="${GITHUB_RUN_ID}" \
+            -e GITHUB_TOKEN="${GITHUB_TOKEN}" \
+            -e DHLOTTERY_USERNAME \
+            -e DHLOTTERY_PASSWORD \
+            -e TELEGRAM_BOT_TOKEN \
+            -e TELEGRAM_CHAT_ID \
+            -v "$PWD:/app" \
+            -w /app \
+            lottery-bot-ci:latest \
+            node --experimental-strip-types src/cli.ts buy --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }} --force=${{ github.event_name == 'schedule' && 'false' || inputs.force }}
+      - name: Upload purchase artifact
+        if: ${{ env.ACT != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: purchase-record
+          path: artifacts/
+          if-no-files-found: error

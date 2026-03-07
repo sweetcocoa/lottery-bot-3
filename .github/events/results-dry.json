@@ -1,0 +1,6 @@
+{
+  "inputs": {
+    "mode": "dry-run",
+    "artifact_source": "local-fixture"
+  }
+}

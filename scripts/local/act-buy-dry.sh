@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+ACT_ARCH="${ACT_ARCH:-linux/amd64}"
+ACT_PLATFORM="${ACT_PLATFORM:-ubuntu-latest=catthehacker/ubuntu:act-latest}"
+ACT_CACHE_DIR="${ACT_CACHE_DIR:-/tmp/lottery-bot-act-cache}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/lottery-bot-xdg-cache}"
+export ACT_CACHE_DIR XDG_CACHE_HOME
+act workflow_dispatch \
+  --bind \
+  --container-architecture "$ACT_ARCH" \
+  -P "$ACT_PLATFORM" \
+  -W .github/workflows/buy.yml \
+  -e .github/events/buy-dry.json \
+  "$@"

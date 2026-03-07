@@ -1,0 +1,25 @@
+{
+  "week": "2026-W10",
+  "mode": "dry-run",
+  "executedAt": "2026-03-09T00:00:00.000Z",
+  "lotto": {
+    "mode": "fixed",
+    "tickets": [[3, 11, 19, 23, 37, 42], [3, 11, 19, 23, 37, 42]],
+    "count": 2,
+    "drawRound": 1162,
+    "status": "simulated",
+    "receiptId": "mock-2026-W10"
+  },
+  "pension": {
+    "mode": "fixed",
+    "tickets": [{ "group": 4, "number": "123456" }],
+    "count": 1,
+    "drawRound": 265,
+    "status": "simulated",
+    "receiptId": "mock-2026-W10"
+  },
+  "runContext": {
+    "workflow": "buy.yml",
+    "runner": "local"
+  }
+}

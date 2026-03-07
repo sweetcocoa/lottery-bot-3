@@ -1,0 +1,13 @@
+{
+  "name": "lottery-bot-3",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.52.0"
+  },
+  "scripts": {
+    "app": "node --experimental-strip-types src/cli.ts",
+    "test": "node --experimental-strip-types --test tests/**/*.test.ts"
+  }
+}

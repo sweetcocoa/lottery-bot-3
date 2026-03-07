@@ -1,0 +1,75 @@
+name: Weekly Results
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run mode
+        required: false
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - live
+      artifact_source:
+        description: Purchase artifact source
+        required: false
+        default: local-fixture
+        type: choice
+        options:
+          - github
+          - local-fixture
+
+jobs:
+  results:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      DOCKER_API_VERSION: "1.41"
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CI image
+        run: DOCKER_BUILDKIT=0 docker build -f Dockerfile.ci -t lottery-bot-ci:latest .
+      - name: Ensure artifacts dir
+        run: mkdir -p artifacts
+      - name: Install live dependencies
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/app" \
+            -w /app \
+            lottery-bot-ci:latest \
+            npm install --no-fund --no-audit
+      - name: Download latest purchase artifact
+        if: ${{ github.event_name == 'schedule' || inputs.artifact_source == 'github' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id="$(gh run list --workflow 'Buy Lottery' --json databaseId,conclusion,event --jq 'map(select(.conclusion=="success" and (.event=="schedule" or .event=="workflow_dispatch"))) | .[0].databaseId')"
+          if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
+            gh run download "$run_id" --name purchase-record --dir artifacts/downloaded
+          fi
+      - name: Run summarize command
+        run: |
+          docker run --rm \
+            -e GITHUB_ACTIONS=true \
+            -e TELEGRAM_BOT_TOKEN \
+            -e TELEGRAM_CHAT_ID \
+            -v "$PWD:/app" \
+            -w /app \
+            lottery-bot-ci:latest \
+            node --experimental-strip-types src/cli.ts summarize --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }} --artifact-source=${{ github.event_name == 'schedule' && 'github' || inputs.artifact_source }}
+      - name: Upload summary artifact
+        if: ${{ env.ACT != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-summary-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error

@@ -1,0 +1,12 @@
+lotto:
+  mode: random_same
+  count: 2
+
+pension:
+  mode: random
+  count: 1
+
+notifications:
+  single_chat: true
+  dry_run_prefix: "[DRY-RUN]"
+  live_prefix: "[LIVE]"
