@@ -145,9 +145,27 @@ async function collectPageDetails(page: any): Promise<string[]> {
 
 async function login(page: any, username: string, password: string): Promise<void> {
   await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.locator('#inpUserId').fill(username);
-  await page.locator('#inpUserPswdEncn').fill(password);
-  await page.locator('#btnLogin').click();
+  await page.waitForFunction(
+    () => typeof (window as any).login === 'function'
+      && typeof (window as any).fnRSAencrypt === 'function'
+      && !!(window as any).rsa?.n,
+    { timeout: 15000 },
+  );
+  await page.evaluate(({ username, password }) => {
+    const idInput = document.getElementById('inpUserId') as HTMLInputElement | null;
+    const pwInput = document.getElementById('inpUserPswdEncn') as HTMLInputElement | null;
+    if (!idInput || !pwInput) {
+      throw new Error('Login inputs are missing');
+    }
+    idInput.value = username;
+    pwInput.value = password;
+    idInput.dispatchEvent(new Event('input', { bubbles: true }));
+    pwInput.dispatchEvent(new Event('input', { bubbles: true }));
+    idInput.dispatchEvent(new Event('change', { bubbles: true }));
+    pwInput.dispatchEvent(new Event('change', { bubbles: true }));
+    // @ts-ignore
+    login();
+  }, { username, password });
   await page.waitForTimeout(5000);
 
   if (page.url().includes('/login')) {
