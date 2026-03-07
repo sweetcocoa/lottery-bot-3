@@ -259,7 +259,7 @@ async function finalizeLottoPurchase(frame: any): Promise<string> {
 
 async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Promise<void> {
   for (const ticket of tickets) {
-    await setCheckboxValue(frame, `#lotto720_radio_group_wrapper_num${ticket.group}`);
+    await selectPensionGroup(frame, ticket.group);
     for (const digit of ticket.number.split('')) {
       await frame.locator(`.lotto720_select_number_wrapper a:has-text("${digit}")`).first().click();
       await frame.waitForTimeout(100);
@@ -298,4 +298,19 @@ async function setCheckboxValue(frame: any, selector: string): Promise<void> {
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
   }, selector);
+}
+
+async function selectPensionGroup(frame: any, group: number): Promise<void> {
+  const groupSelector = `.jogroup.num${group}`;
+  await frame.locator(groupSelector).waitFor({ state: 'visible', timeout: 10000 });
+  await frame.locator(groupSelector).click();
+  await frame.waitForFunction(
+    (expectedGroup: number) => {
+      const setType = (document.querySelector('#set_type') as HTMLInputElement | null)?.value;
+      const classNum = (document.querySelector('#classnum') as HTMLInputElement | null)?.value;
+      return setType === 'S' && classNum === String(expectedGroup);
+    },
+    group,
+    { timeout: 5000 },
+  );
 }
