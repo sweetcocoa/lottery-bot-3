@@ -29,25 +29,22 @@ jobs:
       actions: read
       contents: read
     env:
-      GITHUB_TOKEN: ${{ github.token }}
-      DOCKER_API_VERSION: "1.41"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
       - uses: actions/checkout@v4
-      - name: Build CI image
-        run: DOCKER_BUILDKIT=0 docker build -f Dockerfile.ci -t lottery-bot-ci:latest .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
       - name: Ensure artifacts dir
         run: mkdir -p artifacts
-      - name: Install live dependencies
-        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
-        run: |
-          docker run --rm \
-            -e PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
-            -v "$PWD:/app" \
-            -w /app \
-            lottery-bot-ci:latest \
-            npm ci --no-fund --no-audit
+
       - name: Download latest purchase artifact
         if: ${{ github.event_name == 'schedule' || inputs.artifact_source == 'github' }}
         env:
@@ -57,17 +54,13 @@ jobs:
           if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
             gh run download "$run_id" --name purchase-record --dir artifacts/downloaded
           fi
+
       - name: Run summarize command
         run: |
-          docker run --rm \
-            -e GITHUB_ACTIONS=true \
-            -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-            -e TELEGRAM_BOT_TOKEN \
-            -e TELEGRAM_CHAT_ID \
-            -v "$PWD:/app" \
-            -w /app \
-            lottery-bot-ci:latest \
-            node --experimental-strip-types src/cli.ts summarize --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }} --artifact-source=${{ github.event_name == 'schedule' && 'github' || inputs.artifact_source }}
+          node --experimental-strip-types src/cli.ts summarize \
+            --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }} \
+            --artifact-source=${{ github.event_name == 'schedule' && 'github' || inputs.artifact_source }}
+
       - name: Upload summary artifact
         if: ${{ env.ACT != 'true' }}
         uses: actions/upload-artifact@v4

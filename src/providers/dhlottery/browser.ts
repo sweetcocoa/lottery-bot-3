@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
 
-interface BrowserPurchaseInput {
+interface BrowserInput {
   username: string;
   password: string;
   week: string;
@@ -9,49 +9,108 @@ interface BrowserPurchaseInput {
   pensionTickets: PensionTicket[];
 }
 
+export interface BrowserArtifacts {
+  diagnosticsPath: string;
+  receiptId?: string;
+}
+
+const LOGIN_URL = 'https://www.dhlottery.co.kr/login';
+const LOTTO_INTRO_URL = 'https://www.dhlottery.co.kr/lt645/intro';
+const LOTTO_PURCHASE_URL = 'https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40';
+const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+const CONTEXT_OPTIONS = {
+  viewport: { width: 1440, height: 1024 },
+  locale: 'ko-KR',
+  timezoneId: 'Asia/Seoul',
+  userAgent: DESKTOP_USER_AGENT,
+};
+
 export class BrowserDhlotteryProvider {
-  async purchase(input: BrowserPurchaseInput): Promise<{ receiptId: string; diagnosticsPath: string }> {
-    const playwright = await importPlaywright();
-    const browser = await playwright.chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1024 } });
-    await mkdir('artifacts/diagnostics', { recursive: true });
-    const diagnosticsPath = `artifacts/diagnostics/browser-purchase-${input.week}.txt`;
+  async smoke(input: BrowserInput): Promise<BrowserArtifacts> {
+    return runBrowserFlow('smoke', input, async (session) => {
+      await login(session.page, input.username, input.password);
+      const purchasePage = await openPurchasePage(session.page);
+      const lottoFrame = await resolveGameFrame(purchasePage);
+      await lottoFrame.locator('#btnSelectNum').waitFor({ state: 'visible', timeout: 10000 });
+      await switchToPensionTab(purchasePage);
+      const pensionFrame = await resolveGameFrame(purchasePage);
+      await pensionFrame.locator('#lotto720_radio_group_wrapper_num1').waitFor({ state: 'attached', timeout: 10000 });
+      await pensionFrame.locator('.lotto720_select_number_wrapper').first().waitFor({ state: 'visible', timeout: 10000 });
 
-    try {
-      await login(page, input.username, input.password);
+      const details = [
+        `mode=smoke`,
+        `week=${input.week}`,
+        `loginUrl=${session.page.url()}`,
+        `purchaseUrl=${purchasePage.url()}`,
+        `lottoReady=true`,
+        `pensionReady=true`,
+      ];
+      return { details };
+    });
+  }
 
-      const lotteryPopup = await openPurchasePopup(page);
-      const lottoFrame = await resolveGameFrame(lotteryPopup);
+  async purchase(input: BrowserInput): Promise<BrowserArtifacts> {
+    return runBrowserFlow('purchase', input, async (session) => {
+      await login(session.page, input.username, input.password);
+      const purchasePage = await openPurchasePage(session.page);
+      const lottoFrame = await resolveGameFrame(purchasePage);
       await purchaseLottoTickets(lottoFrame, input.lottoTickets);
       const lottoReceipt = await finalizeLottoPurchase(lottoFrame);
 
-      await lotteryPopup.evaluate(() => {
-        // @ts-ignore
-        tabview('LP72');
-      });
-      await lotteryPopup.waitForTimeout(1500);
-      const pensionFrame = await resolveGameFrame(lotteryPopup);
+      await switchToPensionTab(purchasePage);
+      const pensionFrame = await resolveGameFrame(purchasePage);
       await purchasePensionTickets(pensionFrame, input.pensionTickets);
       const pensionReceipt = await finalizePensionPurchase(pensionFrame);
 
-      const summary = [
+      const details = [
+        `mode=live`,
         `week=${input.week}`,
         `lotto=${input.lottoTickets.map((ticket) => ticket.join('-')).join('|')}`,
         `lottoReceipt=${lottoReceipt}`,
         `pension=${input.pensionTickets.map((ticket) => `${ticket.group}:${ticket.number}`).join('|')}`,
         `pensionReceipt=${pensionReceipt}`,
-      ].join('\n');
-      await writeFile(diagnosticsPath, `${summary}\n`, 'utf8');
+      ];
       return {
         receiptId: `browser-${input.week}-${Date.now()}`,
-        diagnosticsPath,
+        details,
       };
-    } catch (error) {
-      await page.screenshot({ path: `artifacts/diagnostics/browser-purchase-${input.week}.png`, fullPage: true }).catch(() => undefined);
-      throw error;
-    } finally {
-      await browser.close();
-    }
+    });
+  }
+}
+
+async function runBrowserFlow(
+  mode: 'smoke' | 'purchase',
+  input: BrowserInput,
+  action: (session: { page: any }) => Promise<{ details: string[]; receiptId?: string }>,
+): Promise<BrowserArtifacts> {
+  const playwright = await importPlaywright();
+  const browser = await playwright.chromium.launch({ headless: true });
+  const context = await browser.newContext(CONTEXT_OPTIONS);
+  const page = await context.newPage();
+  await mkdir('artifacts/diagnostics', { recursive: true });
+  const diagnosticsPath = `artifacts/diagnostics/browser-${mode}-${input.week}.txt`;
+  const screenshotPath = `artifacts/diagnostics/browser-${mode}-${input.week}.png`;
+
+  try {
+    const result = await action({ page });
+    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
+    await writeDiagnostics(diagnosticsPath, result.details);
+    return {
+      diagnosticsPath,
+      receiptId: result.receiptId,
+    };
+  } catch (error) {
+    const details = await collectPageDetails(page);
+    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
+    await writeDiagnostics(diagnosticsPath, [
+      `mode=${mode}`,
+      `week=${input.week}`,
+      ...details,
+      `error=${error instanceof Error ? error.message : String(error)}`,
+    ]);
+    throw error;
+  } finally {
+    await browser.close();
   }
 }
 
@@ -59,25 +118,74 @@ async function importPlaywright(): Promise<any> {
   try {
     return await import('playwright');
   } catch {
-    throw new Error('playwright package is not installed. Install it before using --provider=browser or --mode=live.');
+    throw new Error('playwright package is not installed. Install it before using --provider=browser or --mode=smoke/live.');
   }
 }
 
+async function writeDiagnostics(path: string, lines: string[]): Promise<void> {
+  await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+}
+
+async function collectPageDetails(page: any): Promise<string[]> {
+  const title = await page.title().catch(() => '');
+  const currentUrl = page.url();
+  const checks = {
+    hasBuyButton: await page.locator('#btnBuyLt645').count().catch(() => 0),
+    hasGameFrame: await page.locator('#ifrm_tab').count().catch(() => 0),
+    hasLoginInput: await page.locator('#inpUserId').count().catch(() => 0),
+  };
+  return [
+    `currentUrl=${currentUrl}`,
+    `title=${title}`,
+    `hasBuyButton=${checks.hasBuyButton}`,
+    `hasGameFrame=${checks.hasGameFrame}`,
+    `hasLoginInput=${checks.hasLoginInput}`,
+  ];
+}
+
 async function login(page: any, username: string, password: string): Promise<void> {
-  await page.goto('https://www.dhlottery.co.kr/login', { waitUntil: 'domcontentloaded' });
+  await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.locator('#inpUserId').fill(username);
   await page.locator('#inpUserPswdEncn').fill(password);
   await page.locator('#btnLogin').click();
-  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
+  await page.waitForTimeout(5000);
+
+  if (page.url().includes('/login')) {
+    throw new Error(`Login did not complete successfully. finalUrl=${page.url()}`);
+  }
 }
 
-async function openPurchasePopup(page: any): Promise<any> {
-  await page.goto('https://www.dhlottery.co.kr/lt645/intro', { waitUntil: 'domcontentloaded' });
-  const popupPromise = page.waitForEvent('popup', { timeout: 10000 });
+async function openPurchasePage(page: any): Promise<any> {
+  await page.goto(LOTTO_INTRO_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.locator('#btnBuyLt645').waitFor({ state: 'visible', timeout: 10000 });
+
+  const popupPromise = page.waitForEvent('popup', { timeout: 5000 }).catch(() => null);
   await page.locator('#btnBuyLt645').click();
   const popup = await popupPromise;
-  await popup.waitForLoadState('domcontentloaded').catch(() => undefined);
-  return popup;
+  if (popup) {
+    await popup.waitForLoadState('domcontentloaded').catch(() => undefined);
+    if (await looksLikePurchasePage(popup)) {
+      return popup;
+    }
+    await popup.close().catch(() => undefined);
+  }
+
+  const directPage = await page.context().newPage();
+  await directPage.goto(LOTTO_PURCHASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  if (await looksLikePurchasePage(directPage)) {
+    return directPage;
+  }
+
+  const details = await collectPageDetails(directPage);
+  throw new Error(`Could not reach purchase page.\n${details.join('\n')}`);
+}
+
+async function looksLikePurchasePage(page: any): Promise<boolean> {
+  if (page.url().includes('m.dhlottery.co.kr')) {
+    return false;
+  }
+  const hasFrame = await page.locator('#ifrm_tab').count().catch(() => 0);
+  return hasFrame > 0 || page.url().includes('TotalGame.jsp');
 }
 
 async function resolveGameFrame(popup: any): Promise<any> {
@@ -88,6 +196,14 @@ async function resolveGameFrame(popup: any): Promise<any> {
   }
   await frame.waitForLoadState('domcontentloaded').catch(() => undefined);
   return frame;
+}
+
+async function switchToPensionTab(popup: any): Promise<void> {
+  await popup.evaluate(() => {
+    // @ts-ignore
+    tabview('LP72');
+  });
+  await popup.waitForTimeout(1500);
 }
 
 async function purchaseLottoTickets(frame: any, tickets: LottoTicket[]): Promise<void> {

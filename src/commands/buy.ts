@@ -9,20 +9,20 @@ import { MockDhlotteryProvider } from '../providers/dhlottery/mock.ts';
 import { TelegramClient } from '../providers/telegram/client.ts';
 
 export interface BuyOptions {
-  mode: 'dry-run' | 'live';
+  mode: 'dry-run' | 'smoke' | 'live';
   provider?: 'mock' | 'browser';
   force?: boolean;
   seed?: string;
   targetWeek?: string;
 }
 
-export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord> {
+export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord | void> {
   const config = await loadConfig();
   const week = getWeekContext(new Date(), options.targetWeek);
   const seed = options.seed ?? `${week.week}:${options.mode}`;
   const lottoTickets = resolveLottoTickets(config.lotto, seed);
   const pensionTickets = resolvePensionTickets(config.pension, seed);
-  const provider = options.provider ?? (options.mode === 'live' ? 'browser' : 'mock');
+  const provider = options.provider ?? (options.mode === 'dry-run' ? 'mock' : 'browser');
   const telegram = new TelegramClient();
 
   if (options.mode === 'live' && !options.force && await hasCurrentWeekPurchase(week.week)) {
@@ -36,6 +36,10 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
     const mock = new MockDhlotteryProvider();
     const result = await mock.purchase({ mode: options.mode, week: week.week, lottoTickets, pensionTickets });
     receiptId = result.receiptId;
+    if (options.mode === 'smoke') {
+      await telegram.send(`${config.notifications.live_prefix} [SMOKE] buy readiness check completed for ${week.week}\n${result.diagnosticsPath}`);
+      return;
+    }
   } else {
     const username = process.env.DHLOTTERY_USERNAME;
     const password = process.env.DHLOTTERY_PASSWORD;
@@ -43,13 +47,18 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
       throw new Error('DHLOTTERY_USERNAME and DHLOTTERY_PASSWORD are required for browser provider');
     }
     const browser = new BrowserDhlotteryProvider();
+    if (options.mode === 'smoke') {
+      const result = await browser.smoke({ username, password, week: week.week, lottoTickets, pensionTickets });
+      await telegram.send(`${config.notifications.live_prefix} [SMOKE] buy readiness check completed for ${week.week}\n${result.diagnosticsPath}`);
+      return;
+    }
     const result = await browser.purchase({ username, password, week: week.week, lottoTickets, pensionTickets });
-    receiptId = result.receiptId;
+    receiptId = result.receiptId ?? receiptId;
   }
 
   const record: PurchaseRecord = {
     week: week.week,
-    mode: options.mode,
+    mode: options.mode === 'smoke' ? 'dry-run' : options.mode,
     executedAt: new Date().toISOString(),
     lotto: {
       mode: config.lotto.mode,

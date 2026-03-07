@@ -8,6 +8,6 @@
   },
   "scripts": {
     "app": "node --experimental-strip-types src/cli.ts",
-    "test": "node --experimental-strip-types --test tests/**/*.test.ts"
+    "test": "node --experimental-strip-types --test --test-concurrency=1 tests/**/*.test.ts"
   }
 }

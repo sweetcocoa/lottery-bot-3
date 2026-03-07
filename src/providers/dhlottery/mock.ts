@@ -8,7 +8,7 @@ export interface PurchaseArtifacts {
 
 export class MockDhlotteryProvider {
   async purchase(input: {
-    mode: 'dry-run' | 'live';
+    mode: 'dry-run' | 'smoke' | 'live';
     week: string;
     lottoTickets: LottoTicket[];
     pensionTickets: PensionTicket[];

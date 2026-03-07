@@ -1,36 +1,74 @@
 # lottery-bot-3
 
-GitHub Actions 기반 동행복권 자동구매/주간결과 요약 워크플로 골격이다.
+GitHub Actions 기반 동행복권 자동구매/주간결과 요약 워크플로다.
 
 ## 빠른 시작
 
 1. [`config/picks.yaml`](/Users/jonghochoi/workspace/lottery-bot-3/config/picks.yaml)에서 고정/랜덤 구매 전략을 정한다.
 2. [`config/local.env.example`](/Users/jonghochoi/workspace/lottery-bot-3/config/local.env.example)를 참고해 `config/local.env`를 만든다.
-3. `mock dry-run`으로 먼저 검증한다.
+3. 기본 검증부터 돌린다.
 
 ```sh
+npm ci
 npm test
 node --experimental-strip-types src/cli.ts buy --mode=dry-run
 node --experimental-strip-types src/cli.ts summarize --mode=dry-run --artifact-source=local-fixture
 ```
 
-## 로컬 workflow 검증
+## 로컬 구매 검증
 
-`act`가 설치되어 있으면 아래 스크립트로 GitHub Actions 자체를 로컬에서 재현할 수 있다.
+구매 workflow는 GitHub-hosted `macos-15` runner를 기준으로 동작한다. `act`로 동일 runner를 재현하지 않고, 로컬에서는 runner-native smoke 검증을 사용한다.
 
-기본값은 Apple Silicon에서도 프롬프트 없이 돌도록 `linux/amd64`와 `catthehacker/ubuntu:act-latest`를 강제한다.
+Playwright 브라우저가 아직 없으면 먼저 설치한다.
 
 ```sh
-scripts/local/act-buy-dry.sh
+npx playwright install chromium
+```
+
+실사이트 로그인과 구매 페이지 진입만 확인하고, 실제 구매는 하지 않는 smoke 검증:
+
+```sh
+scripts/local/buy-smoke.sh
+```
+
+직접 실행도 가능하다.
+
+```sh
+set -a
+. ./config/local.env
+set +a
+node --experimental-strip-types src/cli.ts buy --mode=smoke
+```
+
+## 로컬 workflow 검증
+
+`results.yml`은 계속 Ubuntu runner 기준이라 `act`로 검증한다.
+
+```sh
 scripts/local/act-results-dry.sh
 ```
 
-실사이트 로그인 검증 또는 live 실행은 `config/local.env`가 준비된 뒤에만 사용한다.
+필요하면 live 결과 요약도 `act`로 돌릴 수 있다.
 
 ```sh
-scripts/local/act-buy-live.sh
 scripts/local/act-results-live.sh
 ```
+
+## GitHub Actions 운영
+
+- `buy.yml`
+  - runner: `macos-15`
+  - schedule: 매주 월요일 09:00 KST
+  - manual mode: `dry-run`, `smoke`, `live`
+- `results.yml`
+  - runner: `ubuntu-latest`
+  - schedule: 매주 일요일 09:00 KST
+
+운영 전에 권장 순서는 다음이다.
+
+1. `buy.yml`을 `workflow_dispatch mode=dry-run`
+2. `buy.yml`을 `workflow_dispatch mode=smoke`
+3. `buy.yml`을 `workflow_dispatch mode=live`
 
 ## 랜덤 모드
 
@@ -47,6 +85,7 @@ scripts/local/act-results-live.sh
 
 ## 주의
 
-- `mock dry-run`은 로그인하지 않는다.
-- `browser/live`는 현재 로그인 smoke test와 artifact 생성까지 구현되어 있다.
-- 실제 구매 셀렉터는 사이트 구조 변화에 따라 추가 보강이 필요할 수 있다.
+- `dry-run`은 로그인하지 않는다.
+- `smoke`는 로그인과 구매 페이지 진입만 확인하고 실제 구매는 하지 않는다.
+- `live`만 실제 번호 선택과 구매 확정을 수행한다.
+- `results.yml`은 가장 최근 성공한 구매 artifact를 기준으로 주간 요약을 만든다.
