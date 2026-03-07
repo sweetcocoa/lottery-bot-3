@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "playwright": "^1.52.0"
+    "playwright": "1.58.2"
   },
   "scripts": {
     "app": "node --experimental-strip-types src/cli.ts",
