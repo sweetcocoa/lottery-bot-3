@@ -17,6 +17,7 @@ export interface BrowserArtifacts {
 const LOGIN_URL = 'https://www.dhlottery.co.kr/login';
 const LOTTO_INTRO_URL = 'https://www.dhlottery.co.kr/lt645/intro';
 const LOTTO_PURCHASE_URL = 'https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40';
+const PENSION_PURCHASE_URL = 'https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72';
 const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 const CONTEXT_OPTIONS = {
   viewport: { width: 1440, height: 1024 },
@@ -217,11 +218,17 @@ async function resolveGameFrame(popup: any): Promise<any> {
 }
 
 async function switchToPensionTab(popup: any): Promise<void> {
-  await popup.evaluate(() => {
-    // @ts-ignore
-    tabview('LP72');
-  });
-  await popup.waitForTimeout(1500);
+  const canUseTabview = await popup.evaluate(() => typeof (window as any).tabview === 'function').catch(() => false);
+  if (canUseTabview) {
+    await popup.evaluate(() => {
+      // @ts-ignore
+      tabview('LP72');
+    });
+    await popup.waitForTimeout(1500);
+    return;
+  }
+
+  await popup.goto(PENSION_PURCHASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 }
 
 async function purchaseLottoTickets(frame: any, tickets: LottoTicket[]): Promise<void> {

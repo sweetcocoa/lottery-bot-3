@@ -63,10 +63,10 @@ jobs:
           path: artifacts/purchase-record.json
           if-no-files-found: error
 
-      - name: Upload smoke diagnostics
-        if: ${{ always() && github.event_name != 'schedule' && inputs.mode == 'smoke' }}
+      - name: Upload diagnostics
+        if: ${{ always() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'smoke') }}
         uses: actions/upload-artifact@v4
         with:
-          name: buy-smoke-diagnostics-${{ github.run_id }}
+          name: buy-diagnostics-${{ github.run_id }}
           path: artifacts/diagnostics/
           if-no-files-found: warn
