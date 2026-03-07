@@ -230,8 +230,12 @@ async function purchaseLottoTickets(frame: any, tickets: LottoTicket[]): Promise
   }
   for (const ticket of tickets) {
     for (const value of ticket) {
-      await frame.locator(`#check645num${value}`).check();
+      await setCheckboxValue(frame, `#check645num${value}`);
     }
+    await frame.waitForFunction(
+      () => document.querySelectorAll('#checkNumGroup input[type="checkbox"][name="check645num"]:checked').length === 6,
+      { timeout: 5000 },
+    );
     await frame.locator('#btnSelectNum').click();
     await frame.waitForTimeout(300);
   }
@@ -248,7 +252,7 @@ async function finalizeLottoPurchase(frame: any): Promise<string> {
 
 async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Promise<void> {
   for (const ticket of tickets) {
-    await frame.locator(`#lotto720_radio_group_wrapper_num${ticket.group}`).check();
+    await setCheckboxValue(frame, `#lotto720_radio_group_wrapper_num${ticket.group}`);
     for (const digit of ticket.number.split('')) {
       await frame.locator(`.lotto720_select_number_wrapper a:has-text("${digit}")`).first().click();
       await frame.waitForTimeout(100);
@@ -274,4 +278,17 @@ async function finalizePensionPurchase(frame: any): Promise<string> {
   await frame.waitForSelector('#lotto720_popup_compleate', { state: 'visible', timeout: 30000 });
   const receipt = await frame.locator('#orderNo').inputValue().catch(() => '');
   return (receipt || 'pension-order-missing').trim();
+}
+
+async function setCheckboxValue(frame: any, selector: string): Promise<void> {
+  await frame.locator(selector).waitFor({ state: 'attached', timeout: 10000 });
+  await frame.evaluate((targetSelector: string) => {
+    const element = document.querySelector(targetSelector) as HTMLInputElement | null;
+    if (!element) {
+      throw new Error(`Missing input: ${targetSelector}`);
+    }
+    element.checked = true;
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  }, selector);
 }
