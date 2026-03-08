@@ -1,14 +1,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { loadConfig } from '../config/schema.ts';
 import { getWeekContext } from '../core/draw-calendar.ts';
-import { loadPurchaseRecord, type PurchaseRecord } from '../core/purchase-record.ts';
+import type { PurchaseRecord } from '../core/purchase-record.ts';
+import { DhlotteryHistoryProvider } from '../providers/dhlottery/history.ts';
 import { fetchLottoResult, fetchPensionResult, loadFixtureResults } from '../providers/results/fetcher.ts';
 import { TelegramClient } from '../providers/telegram/client.ts';
 
 export interface SummarizeOptions {
   mode: 'dry-run' | 'live';
-  artifactSource?: 'github' | 'local-fixture';
+  purchaseSource?: 'history' | 'local-fixture';
   targetWeek?: string;
 }
 
@@ -34,27 +34,45 @@ function formatSummary(record: PurchaseRecord, lottoWinning: number[], pensionWi
   ].join('\n');
 }
 
-async function loadRecord(artifactSource: 'github' | 'local-fixture'): Promise<PurchaseRecord> {
-  if (artifactSource === 'local-fixture') {
+async function loadRecord(options: {
+  mode: 'dry-run' | 'live';
+  purchaseSource: 'history' | 'local-fixture';
+  config: Awaited<ReturnType<typeof loadConfig>>;
+  week: ReturnType<typeof getWeekContext>;
+}): Promise<PurchaseRecord> {
+  if (options.purchaseSource === 'local-fixture') {
     const raw = await readFile('src/testing/fixtures/purchase-record.fixture.json', 'utf8');
     return JSON.parse(raw) as PurchaseRecord;
   }
-  if (existsSync('artifacts/downloaded/purchase-record/purchase-record.json')) {
-    return loadPurchaseRecord('artifacts/downloaded/purchase-record/purchase-record.json');
+
+  const username = process.env.DHLOTTERY_USERNAME;
+  const password = process.env.DHLOTTERY_PASSWORD;
+  if (!username || !password) {
+    throw new Error('DHLOTTERY_USERNAME and DHLOTTERY_PASSWORD are required to load purchase history from dhlottery.co.kr');
   }
-  return loadPurchaseRecord();
+
+  const provider = new DhlotteryHistoryProvider();
+  return provider.loadWeeklyPurchaseRecord({
+    username,
+    password,
+    week: options.week.week,
+    weekStartDate: options.week.weekStartDate,
+    weekEndDate: options.week.weekEndDate,
+    config: options.config,
+  });
 }
 
 export async function runSummarizeCommand(options: SummarizeOptions): Promise<string> {
   const config = await loadConfig();
-  const artifactSource = options.artifactSource ?? (options.mode === 'live' ? 'github' : 'local-fixture');
   const week = getWeekContext(new Date(), options.targetWeek);
+  const purchaseSource = options.purchaseSource ?? (options.mode === 'live' ? 'history' : 'local-fixture');
   let record: PurchaseRecord;
   try {
-    record = await loadRecord(artifactSource);
-  } catch {
+    record = await loadRecord({ mode: options.mode, purchaseSource, config, week });
+  } catch (error) {
     const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
-    const message = `${prefix} weekly summary for ${week.week}\nno purchase record found for this run.`;
+    const reason = error instanceof Error ? error.message : 'purchase history could not be loaded';
+    const message = `${prefix} weekly summary for ${week.week}\nno purchase record found for this run.\nreason=${reason}`;
     await mkdir('artifacts', { recursive: true });
     await writeFile('artifacts/weekly-summary.txt', `${message}\n`, 'utf8');
     const telegram = new TelegramClient();
@@ -62,15 +80,33 @@ export async function runSummarizeCommand(options: SummarizeOptions): Promise<st
     return message;
   }
 
-  const results = options.mode === 'live'
-    ? {
-        lotto: await fetchLottoResult(record.lotto.drawRound),
-        pension: await fetchPensionResult(record.pension.drawRound),
-      }
-    : await loadFixtureResults();
+  let results;
+  try {
+    results = options.mode === 'live'
+      ? {
+          lotto: await fetchLottoResult(record.lotto.drawRound),
+          pension: await fetchPensionResult(record.pension.drawRound),
+        }
+      : await loadFixtureResults();
+  } catch (error) {
+    const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
+    const reason = error instanceof Error ? error.message : 'result fetch failed';
+    const message = `${prefix} weekly summary for ${record.week}\nfailed to load winning results.\nreason=${reason}`;
+    await mkdir('artifacts', { recursive: true });
+    if (purchaseSource === 'history') {
+      await writeFile('artifacts/purchase-record.history.json', `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+    }
+    await writeFile('artifacts/weekly-summary.txt', `${message}\n`, 'utf8');
+    const telegram = new TelegramClient();
+    await telegram.send(message);
+    return message;
+  }
 
   const summary = formatSummary(record, results.lotto.numbers, results.pension.winningNumbers);
   await mkdir('artifacts', { recursive: true });
+  if (purchaseSource === 'history') {
+    await writeFile('artifacts/purchase-record.history.json', `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  }
   await writeFile('artifacts/weekly-summary.txt', `${summary}\n`, 'utf8');
 
   const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;

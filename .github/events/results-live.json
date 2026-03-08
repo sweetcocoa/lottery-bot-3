@@ -1,6 +1,5 @@
 {
   "inputs": {
-    "mode": "live",
-    "artifact_source": "github"
+    "mode": "live"
   }
 }

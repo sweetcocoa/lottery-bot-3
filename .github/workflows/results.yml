@@ -13,22 +13,15 @@ on:
         options:
           - dry-run
           - live
-      artifact_source:
-        description: Purchase artifact source
-        required: false
-        default: local-fixture
-        type: choice
-        options:
-          - github
-          - local-fixture
 
 jobs:
   results:
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
     env:
+      DHLOTTERY_USERNAME: ${{ secrets.DHLOTTERY_USERNAME }}
+      DHLOTTERY_PASSWORD: ${{ secrets.DHLOTTERY_PASSWORD }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
@@ -42,36 +35,22 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-fund --no-audit
 
+      - name: Install Playwright browser
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
+        run: npx playwright install --with-deps chromium
+
       - name: Ensure artifacts dir
         run: mkdir -p artifacts
-
-      - name: Download latest purchase artifact
-        if: ${{ github.event_name == 'schedule' || inputs.artifact_source == 'github' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          found=""
-          for run_id in $(gh run list --workflow 'Buy Lottery' --limit 20 --json databaseId,conclusion,event --jq 'map(select(.conclusion=="success" and (.event=="schedule" or .event=="workflow_dispatch"))) | .[].databaseId'); do
-            if gh run download "$run_id" --name purchase-record --dir artifacts/downloaded >/dev/null 2>&1; then
-              found="$run_id"
-              echo "Downloaded purchase-record artifact from run $run_id"
-              break
-            fi
-          done
-          if [ -z "$found" ]; then
-            echo "No purchase-record artifact found in recent successful Buy Lottery runs"
-          fi
 
       - name: Run summarize command
         run: |
           node --experimental-strip-types src/cli.ts summarize \
-            --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }} \
-            --artifact-source=${{ github.event_name == 'schedule' && 'github' || inputs.artifact_source }}
+            --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }}
 
       - name: Upload summary artifact
-        if: ${{ env.ACT != 'true' }}
+        if: ${{ always() && env.ACT != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: weekly-summary-${{ github.run_id }}
           path: artifacts/
-          if-no-files-found: error
+          if-no-files-found: ignore

@@ -20,7 +20,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 function printHelp(): void {
   console.log(`Usage:
   node --experimental-strip-types src/cli.ts buy --mode=dry-run|smoke|live [--provider=mock|browser] [--force=true|false] [--seed=value] [--target-week=YYYY-Www]
-  node --experimental-strip-types src/cli.ts summarize --mode=dry-run|live [--artifact-source=github|local-fixture] [--target-week=YYYY-Www]`);
+  node --experimental-strip-types src/cli.ts summarize --mode=dry-run|live [--purchase-source=history|local-fixture] [--target-week=YYYY-Www]`);
 }
 
 async function main(): Promise<void> {
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   if (command === 'summarize') {
     await runSummarizeCommand({
       mode: (flags.mode as 'dry-run' | 'live') ?? 'dry-run',
-      artifactSource: flags['artifact-source'] as 'github' | 'local-fixture' | undefined,
+      purchaseSource: flags['purchase-source'] as 'history' | 'local-fixture' | undefined,
       targetWeek: flags['target-week'],
     });
     return;

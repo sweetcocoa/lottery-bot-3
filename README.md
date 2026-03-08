@@ -12,7 +12,7 @@ GitHub Actions 기반 동행복권 자동구매/주간결과 요약 워크플로
 npm ci
 npm test
 node --experimental-strip-types src/cli.ts buy --mode=dry-run
-node --experimental-strip-types src/cli.ts summarize --mode=dry-run --artifact-source=local-fixture
+node --experimental-strip-types src/cli.ts summarize --mode=dry-run --purchase-source=local-fixture
 ```
 
 ## 로컬 구매 검증
@@ -54,6 +54,16 @@ scripts/local/act-results-dry.sh
 scripts/local/act-results-live.sh
 ```
 
+실사이트 구매내역을 직접 읽는 runner-native 실행도 가능하다.
+
+```sh
+set -a
+. ./config/local.env
+set +a
+npx playwright install chromium
+node --experimental-strip-types src/cli.ts summarize --mode=live
+```
+
 ## GitHub Actions 운영
 
 - `buy.yml`
@@ -88,4 +98,5 @@ scripts/local/act-results-live.sh
 - `dry-run`은 로그인하지 않는다.
 - `smoke`는 로그인과 구매 페이지 진입만 확인하고 실제 구매는 하지 않는다.
 - `live`만 실제 번호 선택과 구매 확정을 수행한다.
-- `results.yml`은 가장 최근 성공한 구매 artifact를 기준으로 주간 요약을 만든다.
+- `results.yml`의 live 모드는 동행복권 구매내역을 직접 파싱해 주간 요약을 만든다.
+- `results.yml` live 에도 `DHLOTTERY_USERNAME`, `DHLOTTERY_PASSWORD` secret 이 필요하다.

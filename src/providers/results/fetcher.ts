@@ -1,3 +1,5 @@
+import { createBrowserSession } from '../dhlottery/session.ts';
+
 export interface LottoResult {
   drawRound: number;
   numbers: number[];
@@ -9,34 +11,105 @@ export interface PensionResult {
   winningNumbers: Array<{ group: number; number: string }>;
 }
 
+const LOTTO_RESULT_URL = 'https://www.dhlottery.co.kr/lt645/result';
+const PENSION_RESULT_URL = 'https://www.dhlottery.co.kr/pt720/result';
+
 export async function fetchLottoResult(round: number): Promise<LottoResult> {
-  const response = await fetch(`https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo=${round}`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch lotto result for round ${round}: ${response.status}`);
+  const { browser, page } = await createBrowserSession();
+  try {
+    await page.goto(LOTTO_RESULT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const result = await page.evaluate(async (requestedRound: number) => {
+      const response = await fetch(`/lt645/selectPstLt645InfoNew.do?srchDir=center&srchLtEpsd=${requestedRound}`, {
+        credentials: 'same-origin',
+      });
+      if (!response.ok) {
+        throw new Error(`Lotto result request failed with status ${response.status}`);
+      }
+      const payload = await response.json() as { data?: { list?: Array<Record<string, unknown>> } };
+      const item = payload.data?.list?.find((candidate) => Number(candidate.ltEpsd) === requestedRound);
+      if (!item) {
+        throw new Error(`Lotto result for round ${requestedRound} is not published yet`);
+      }
+      return {
+        drawRound: requestedRound,
+        numbers: [
+          Number(item.tm1WnNo),
+          Number(item.tm2WnNo),
+          Number(item.tm3WnNo),
+          Number(item.tm4WnNo),
+          Number(item.tm5WnNo),
+          Number(item.tm6WnNo),
+        ],
+        bonus: Number(item.bnsWnNo),
+      };
+    }, round);
+    return result;
+  } finally {
+    await browser.close();
   }
-  const payload = await response.json() as Record<string, unknown>;
-  return {
-    drawRound: round,
-    numbers: [1, 2, 3, 4, 5, 6].map((index) => Number(payload[`drwtNo${index}`])),
-    bonus: Number(payload.bnusNo),
-  };
 }
 
 export async function fetchPensionResult(round: number): Promise<PensionResult> {
-  const response = await fetch(`https://www.dhlottery.co.kr/gameResult.do?method=win720&Round=${round}`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch pension result for round ${round}: ${response.status}`);
+  const { browser, page } = await createBrowserSession();
+  try {
+    await page.goto(PENSION_RESULT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const result = await page.evaluate((requestedRound: number) => {
+      return fetch(`/pt720/selectPstPt720Info.do?srchPsltEpsd=${requestedRound}`, {
+        credentials: 'same-origin',
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Pension result request failed with status ${response.status}`);
+          }
+          const payload = await response.json() as { data?: { result?: Array<Record<string, unknown>> } };
+          const rows = payload.data?.result ?? [];
+          if (!rows.length) {
+            throw new Error(`Pension result for round ${requestedRound} is not published yet`);
+          }
+          const firstPrize = rows.find((candidate) => Number(candidate.wnSqNo) === 1);
+          if (!firstPrize) {
+            throw new Error(`Pension result payload is incomplete for round ${requestedRound}`);
+          }
+          const secondPrizeNumber = String(rows.find((candidate) => Number(candidate.wnSqNo) === 2)?.wnRnkVl ?? '');
+          const bonusNumber = String(rows.find((candidate) => Number(candidate.wnSqNo) === 21)?.wnRnkVl ?? '');
+          const winningNumbers = [
+            { group: Number(firstPrize.wnBndNo), number: String(firstPrize.wnRnkVl) },
+          ];
+          if (secondPrizeNumber) {
+            for (const group of [1, 2, 3, 4, 5]) {
+              winningNumbers.push({ group, number: secondPrizeNumber });
+            }
+          }
+          if (bonusNumber) {
+            for (const group of [1, 2, 3, 4, 5]) {
+              winningNumbers.push({ group, number: bonusNumber });
+            }
+          }
+          return {
+            drawRound: requestedRound,
+            winningNumbers,
+          };
+        });
+    }, round);
+    return {
+      drawRound: result.drawRound,
+      winningNumbers: dedupeWinningNumbers(result.winningNumbers),
+    };
+  } finally {
+    await browser.close();
   }
-  const html = await response.text();
-  const winningNumbers: Array<{ group: number; number: string }> = [];
-  const regex = /(\d)조\s*([0-9]{6})/g;
-  for (const match of html.matchAll(regex)) {
-    winningNumbers.push({ group: Number(match[1]), number: match[2] });
-  }
-  return {
-    drawRound: round,
-    winningNumbers,
-  };
+}
+
+function dedupeWinningNumbers(items: Array<{ group: number; number: string }>): Array<{ group: number; number: string }> {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.group}:${item.number}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 export async function loadFixtureResults(): Promise<{ lotto: LottoResult; pension: PensionResult }> {

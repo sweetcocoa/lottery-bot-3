@@ -50,9 +50,15 @@ function weeklyRound(anchor: Date, base: Date): number {
   return Math.floor(diff / (7 * DAY_MS)) + 1;
 }
 
+function formatIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
 export function getWeekContext(date = new Date(), targetWeek?: string) {
   const baseDate = targetWeek ? mondayFromIsoWeek(targetWeek) : date;
   const week = targetWeek ?? getIsoWeek(date);
+  const weekStartDate = mondayFromIsoWeek(week);
+  const weekEndDate = new Date(weekStartDate.getTime() + 6 * DAY_MS);
   const lottoDrawDate = targetWeek
     ? new Date(baseDate.getTime() + 5 * DAY_MS)
     : kstWeekAnchor(baseDate, 6);
@@ -63,6 +69,8 @@ export function getWeekContext(date = new Date(), targetWeek?: string) {
     week,
     lottoDrawDate,
     pensionDrawDate,
+    weekStartDate: formatIsoDate(weekStartDate),
+    weekEndDate: formatIsoDate(weekEndDate),
     lottoRound: weeklyRound(lottoDrawDate, LOTTO_BASE_DRAW),
     pensionRound: weeklyRound(pensionDrawDate, PENSION_BASE_DRAW),
     runDateKst: startOfKstDay(baseDate).toISOString(),

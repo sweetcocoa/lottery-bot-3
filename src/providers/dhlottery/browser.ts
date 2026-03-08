@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
+import { createBrowserSession, login } from './session.ts';
 
 interface BrowserInput {
   username: string;
@@ -14,17 +15,9 @@ export interface BrowserArtifacts {
   receiptId?: string;
 }
 
-const LOGIN_URL = 'https://www.dhlottery.co.kr/login';
 const LOTTO_INTRO_URL = 'https://www.dhlottery.co.kr/lt645/intro';
 const LOTTO_PURCHASE_URL = 'https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40';
 const PENSION_PURCHASE_URL = 'https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LP72';
-const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
-const CONTEXT_OPTIONS = {
-  viewport: { width: 1440, height: 1024 },
-  locale: 'ko-KR',
-  timezoneId: 'Asia/Seoul',
-  userAgent: DESKTOP_USER_AGENT,
-};
 
 export class BrowserDhlotteryProvider {
   async smoke(input: BrowserInput): Promise<BrowserArtifacts> {
@@ -84,10 +77,7 @@ async function runBrowserFlow(
   input: BrowserInput,
   action: (session: { page: any }) => Promise<{ details: string[]; receiptId?: string }>,
 ): Promise<BrowserArtifacts> {
-  const playwright = await importPlaywright();
-  const browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext(CONTEXT_OPTIONS);
-  const page = await context.newPage();
+  const { browser, page } = await createBrowserSession();
   await mkdir('artifacts/diagnostics', { recursive: true });
   const diagnosticsPath = `artifacts/diagnostics/browser-${mode}-${input.week}.txt`;
   const screenshotPath = `artifacts/diagnostics/browser-${mode}-${input.week}.png`;
@@ -115,14 +105,6 @@ async function runBrowserFlow(
   }
 }
 
-async function importPlaywright(): Promise<any> {
-  try {
-    return await import('playwright');
-  } catch {
-    throw new Error('playwright package is not installed. Install it before using --provider=browser or --mode=smoke/live.');
-  }
-}
-
 async function writeDiagnostics(path: string, lines: string[]): Promise<void> {
   await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
 }
@@ -142,36 +124,6 @@ async function collectPageDetails(page: any): Promise<string[]> {
     `hasGameFrame=${checks.hasGameFrame}`,
     `hasLoginInput=${checks.hasLoginInput}`,
   ];
-}
-
-async function login(page: any, username: string, password: string): Promise<void> {
-  await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForFunction(
-    () => typeof (window as any).login === 'function'
-      && typeof (window as any).fnRSAencrypt === 'function'
-      && !!(window as any).rsa?.n,
-    { timeout: 15000 },
-  );
-  await page.evaluate(({ username, password }) => {
-    const idInput = document.getElementById('inpUserId') as HTMLInputElement | null;
-    const pwInput = document.getElementById('inpUserPswdEncn') as HTMLInputElement | null;
-    if (!idInput || !pwInput) {
-      throw new Error('Login inputs are missing');
-    }
-    idInput.value = username;
-    pwInput.value = password;
-    idInput.dispatchEvent(new Event('input', { bubbles: true }));
-    pwInput.dispatchEvent(new Event('input', { bubbles: true }));
-    idInput.dispatchEvent(new Event('change', { bubbles: true }));
-    pwInput.dispatchEvent(new Event('change', { bubbles: true }));
-    // @ts-ignore
-    login();
-  }, { username, password });
-  await page.waitForTimeout(5000);
-
-  if (page.url().includes('/login')) {
-    throw new Error(`Login did not complete successfully. finalUrl=${page.url()}`);
-  }
 }
 
 async function openPurchasePage(page: any): Promise<any> {
