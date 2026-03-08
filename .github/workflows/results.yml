@@ -50,9 +50,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          run_id="$(gh run list --workflow 'Buy Lottery' --json databaseId,conclusion,event --jq 'map(select(.conclusion=="success" and (.event=="schedule" or .event=="workflow_dispatch"))) | .[0].databaseId')"
-          if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
-            gh run download "$run_id" --name purchase-record --dir artifacts/downloaded
+          found=""
+          for run_id in $(gh run list --workflow 'Buy Lottery' --limit 20 --json databaseId,conclusion,event --jq 'map(select(.conclusion=="success" and (.event=="schedule" or .event=="workflow_dispatch"))) | .[].databaseId'); do
+            if gh run download "$run_id" --name purchase-record --dir artifacts/downloaded >/dev/null 2>&1; then
+              found="$run_id"
+              echo "Downloaded purchase-record artifact from run $run_id"
+              break
+            fi
+          done
+          if [ -z "$found" ]; then
+            echo "No purchase-record artifact found in recent successful Buy Lottery runs"
           fi
 
       - name: Run summarize command
