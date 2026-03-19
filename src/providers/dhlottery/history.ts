@@ -15,6 +15,11 @@ interface HistoryInput {
   config: AppConfig;
 }
 
+export interface WeeklyPurchasePresence {
+  lottoCount: number;
+  pensionCount: number;
+}
+
 interface LedgerEntry {
   index: number;
   productCode: string;
@@ -75,6 +80,26 @@ export function buildHistoryPurchaseRecord(
 }
 
 export class DhlotteryHistoryProvider {
+  async loadWeeklyPurchasePresence(input: Omit<HistoryInput, 'config'>): Promise<WeeklyPurchasePresence> {
+    const { browser, page } = await createBrowserSession();
+    try {
+      await login(page, input.username, input.password);
+      await openLedgerPage(page, input.weekStartDate, input.weekEndDate);
+      const entries = await loadLedgerEntries(page);
+      const weekEntries = entries.filter((entry) => isWithinDateRange(entry.purchaseDate, input.weekStartDate, input.weekEndDate));
+      return {
+        lottoCount: weekEntries
+          .filter((entry) => entry.productCode === 'LO40')
+          .reduce((sum, entry) => sum + Math.max(entry.purchaseCount, 1), 0),
+        pensionCount: weekEntries
+          .filter((entry) => entry.productCode === 'LP72')
+          .reduce((sum, entry) => sum + Math.max(entry.purchaseCount, 1), 0),
+      };
+    } finally {
+      await browser.close();
+    }
+  }
+
   async loadWeeklyPurchaseRecord(input: HistoryInput): Promise<PurchaseRecord> {
     const { browser, page } = await createBrowserSession();
     await mkdir('artifacts/diagnostics', { recursive: true });

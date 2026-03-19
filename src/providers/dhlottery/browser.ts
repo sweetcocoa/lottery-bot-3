@@ -47,14 +47,20 @@ export class BrowserDhlotteryProvider {
     return runBrowserFlow('purchase', input, async (session) => {
       await login(session.page, input.username, input.password);
       const purchasePage = await openPurchasePage(session.page);
-      const lottoFrame = await resolveGameFrame(purchasePage);
-      await purchaseLottoTickets(lottoFrame, input.lottoTickets);
-      const lottoReceipt = await finalizeLottoPurchase(lottoFrame);
+      let lottoReceipt = 'lotto-skipped';
+      if (input.lottoTickets.length > 0) {
+        const lottoFrame = await resolveGameFrame(purchasePage);
+        await purchaseLottoTickets(lottoFrame, input.lottoTickets);
+        lottoReceipt = await finalizeLottoPurchase(lottoFrame);
+      }
 
-      await switchToPensionTab(purchasePage);
-      const pensionFrame = await resolveGameFrame(purchasePage);
-      await purchasePensionTickets(pensionFrame, input.pensionTickets);
-      const pensionReceipt = await finalizePensionPurchase(pensionFrame);
+      let pensionReceipt = 'pension-skipped';
+      if (input.pensionTickets.length > 0) {
+        await switchToPensionTab(purchasePage);
+        const pensionFrame = await resolveGameFrame(purchasePage);
+        await purchasePensionTickets(pensionFrame, input.pensionTickets);
+        pensionReceipt = await finalizePensionPurchase(pensionFrame);
+      }
 
       const details = [
         `mode=live`,
@@ -92,6 +98,7 @@ async function runBrowserFlow(
     };
   } catch (error) {
     const details = await collectPageDetails(page);
+    await captureGameFrameArtifacts(page, `artifacts/diagnostics/browser-${mode}-${input.week}`);
     await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
     await writeDiagnostics(diagnosticsPath, [
       `mode=${mode}`,
@@ -107,6 +114,22 @@ async function runBrowserFlow(
 
 async function writeDiagnostics(path: string, lines: string[]): Promise<void> {
   await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+}
+
+async function captureGameFrameArtifacts(page: any, basePath: string): Promise<void> {
+  const frameHandle = await page.$('#ifrm_tab').catch(() => null);
+  if (!frameHandle) {
+    return;
+  }
+  await page.locator('#ifrm_tab').screenshot({ path: `${basePath}-iframe.png` }).catch(() => undefined);
+  const frame = await frameHandle.contentFrame().catch(() => null);
+  if (!frame) {
+    return;
+  }
+  const html = await frame.content().catch(() => '');
+  if (html) {
+    await writeFile(`${basePath}-frame.html`, html, 'utf8').catch(() => undefined);
+  }
 }
 
 async function collectPageDetails(page: any): Promise<string[]> {
@@ -225,18 +248,70 @@ async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Pro
 }
 
 async function finalizePensionPurchase(frame: any): Promise<string> {
+  const page = frame.page();
+  const dialogPromise = page.waitForEvent('dialog', { timeout: 3000 })
+    .then(async (dialog: any) => {
+      const message = dialog.message();
+      await dialog.accept();
+      return message;
+    })
+    .catch(() => null);
   await frame.evaluate(() => {
     // @ts-ignore
     doOrder();
   });
-  await frame.waitForSelector('#lotto720_popup_confirm', { state: 'visible', timeout: 10000 });
+  const dialogMessage = await dialogPromise;
+  try {
+    await frame.waitForFunction(() => {
+      const popup = document.querySelector('#lotto720_popup_confirm') as HTMLElement | null;
+      if (!popup) {
+        return false;
+      }
+      const style = window.getComputedStyle(popup);
+      return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+    }, { timeout: 10000 });
+  } catch {
+    const state = await collectPensionOrderState(frame);
+    throw new Error([
+      'Pension confirm popup did not appear after doOrder().',
+      `dialog=${dialogMessage ?? 'none'}`,
+      ...state,
+    ].join('\n'));
+  }
   await frame.evaluate(() => {
     // @ts-ignore
     doOrderRequest();
   });
-  await frame.waitForSelector('#lotto720_popup_compleate', { state: 'visible', timeout: 30000 });
+  await frame.waitForFunction(() => {
+    const popup = document.querySelector('#lotto720_popup_compleate') as HTMLElement | null;
+    if (!popup) {
+      return false;
+    }
+    const style = window.getComputedStyle(popup);
+    return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+  }, { timeout: 30000 });
   const receipt = await frame.locator('#orderNo').inputValue().catch(() => '');
   return (receipt || 'pension-order-missing').trim();
+}
+
+async function collectPensionOrderState(frame: any): Promise<string[]> {
+  return frame.evaluate(() => {
+    const getValue = (selector: string) => {
+      return (document.querySelector(selector) as HTMLInputElement | null)?.value ?? '';
+    };
+    const confirm = document.querySelector('#lotto720_popup_confirm') as HTMLElement | null;
+    const complete = document.querySelector('#lotto720_popup_compleate') as HTMLElement | null;
+    return [
+      `frm.BUY_NO=${getValue('#frm input[name="BUY_NO"]')}`,
+      `frm.BUY_CNT=${getValue('#frm input[name="BUY_CNT"]')}`,
+      `frm.BUY_SET_TYPE=${getValue('#frm input[name="BUY_SET_TYPE"]')}`,
+      `set_type=${getValue('#set_type')}`,
+      `classnum=${getValue('#classnum')}`,
+      `selnum=${getValue('#selnum')}`,
+      `confirm.display=${confirm ? window.getComputedStyle(confirm).display : 'missing'}`,
+      `complete.display=${complete ? window.getComputedStyle(complete).display : 'missing'}`,
+    ];
+  });
 }
 
 async function setCheckboxValue(frame: any, selector: string): Promise<void> {
