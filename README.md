@@ -12,6 +12,8 @@ GitHub Actions 기반 동행복권 자동구매/주간결과 요약 워크플로
 npm ci
 npm test
 node --experimental-strip-types src/cli.ts buy --mode=dry-run
+node --experimental-strip-types src/cli.ts buy --mode=dry-run --product=lotto
+node --experimental-strip-types src/cli.ts buy --mode=dry-run --product=pension
 node --experimental-strip-types src/cli.ts summarize --mode=dry-run --purchase-source=local-fixture
 ```
 
@@ -70,6 +72,7 @@ node --experimental-strip-types src/cli.ts summarize --mode=live
   - runner: `macos-15`
   - schedule: 매주 월요일 09:00 KST
   - manual mode: `dry-run`, `smoke`, `live`
+  - manual product: `all`, `lotto`, `pension`
 - `results.yml`
   - runner: `ubuntu-latest`
   - schedule: 매주 일요일 09:00 KST
@@ -79,6 +82,11 @@ node --experimental-strip-types src/cli.ts summarize --mode=live
 1. `buy.yml`을 `workflow_dispatch mode=dry-run`
 2. `buy.yml`을 `workflow_dispatch mode=smoke`
 3. `buy.yml`을 `workflow_dispatch mode=live`
+
+수동 복구가 필요하면 상품만 따로 실행할 수 있다.
+
+1. 로또만: `workflow_dispatch mode=live product=lotto`
+2. 연금복권만: `workflow_dispatch mode=live product=pension`
 
 ## 랜덤 모드
 

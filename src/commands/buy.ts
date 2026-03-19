@@ -11,6 +11,7 @@ import { TelegramClient } from '../providers/telegram/client.ts';
 
 export interface BuyOptions {
   mode: 'dry-run' | 'smoke' | 'live';
+  product?: 'all' | 'lotto' | 'pension';
   provider?: 'mock' | 'browser';
   force?: boolean;
   seed?: string;
@@ -21,12 +22,13 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
   const config = await loadConfig();
   const week = getWeekContext(new Date(), options.targetWeek);
   const seed = options.seed ?? `${week.week}:${options.mode}`;
-  const lottoTickets = resolveLottoTickets(config.lotto, seed);
-  const pensionTickets = resolvePensionTickets(config.pension, seed);
+  const product = options.product ?? 'all';
+  const lottoTickets = product === 'pension' ? [] : resolveLottoTickets(config.lotto, seed);
+  const pensionTickets = product === 'lotto' ? [] : resolvePensionTickets(config.pension, seed);
   let recordLottoTickets = lottoTickets;
   let recordPensionTickets = pensionTickets;
-  let lottoStatus: 'purchased' | 'simulated' | 'skipped' = options.mode === 'live' ? 'purchased' : 'simulated';
-  let pensionStatus: 'purchased' | 'simulated' | 'skipped' = options.mode === 'live' ? 'purchased' : 'simulated';
+  let lottoStatus: 'purchased' | 'simulated' | 'skipped' = lottoTickets.length > 0 ? (options.mode === 'live' ? 'purchased' : 'simulated') : 'skipped';
+  let pensionStatus: 'purchased' | 'simulated' | 'skipped' = pensionTickets.length > 0 ? (options.mode === 'live' ? 'purchased' : 'simulated') : 'skipped';
   const provider = options.provider ?? (options.mode === 'dry-run' ? 'mock' : 'browser');
   const telegram = new TelegramClient();
 
@@ -62,11 +64,11 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
         weekStartDate: week.weekStartDate,
         weekEndDate: week.weekEndDate,
       });
-      if (presence.lottoCount > 0) {
+      if (lottoTicketsToBuy.length > 0 && presence.lottoCount > 0) {
         lottoTicketsToBuy = [];
         lottoStatus = 'skipped';
       }
-      if (presence.pensionCount > 0) {
+      if (pensionTicketsToBuy.length > 0 && presence.pensionCount > 0) {
         pensionTicketsToBuy = [];
         pensionStatus = 'skipped';
       }
@@ -121,7 +123,7 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
 
   await savePurchaseRecord(record);
   const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
-  await telegram.send(`${prefix} buy completed for ${week.week}\nlotto=${recordLottoTickets.map((ticket) => ticket.join('-')).join(' | ') || 'skipped'}\npension=${recordPensionTickets.map((ticket) => `${ticket.group}조 ${ticket.number}`).join(' | ') || 'skipped'}`);
+  await telegram.send(`${prefix} buy completed for ${week.week}\nproduct=${product}\nlotto=${recordLottoTickets.map((ticket) => ticket.join('-')).join(' | ') || 'skipped'}\npension=${recordPensionTickets.map((ticket) => `${ticket.group}조 ${ticket.number}`).join(' | ') || 'skipped'}`);
   return record;
 }
 
