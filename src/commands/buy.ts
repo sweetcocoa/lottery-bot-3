@@ -93,6 +93,10 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
       pensionTickets: pensionTicketsToBuy,
     });
     receiptId = result.receiptId ?? receiptId;
+    recordPensionTickets = result.actualPensionTickets ?? recordPensionTickets;
+    if (recordPensionTickets.length === 0) {
+      pensionStatus = 'skipped';
+    }
   }
 
   const record: PurchaseRecord = {

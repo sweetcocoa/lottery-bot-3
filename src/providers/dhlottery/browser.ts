@@ -13,6 +13,7 @@ interface BrowserInput {
 export interface BrowserArtifacts {
   diagnosticsPath: string;
   receiptId?: string;
+  actualPensionTickets?: PensionTicket[];
 }
 
 const LOTTO_INTRO_URL = 'https://www.dhlottery.co.kr/lt645/intro';
@@ -55,10 +56,11 @@ export class BrowserDhlotteryProvider {
       }
 
       let pensionReceipt = 'pension-skipped';
+      let actualPensionTickets = input.pensionTickets;
       if (input.pensionTickets.length > 0) {
         await switchToPensionTab(purchasePage);
         const pensionFrame = await resolveGameFrame(purchasePage);
-        await purchasePensionTickets(pensionFrame, input.pensionTickets);
+        actualPensionTickets = await purchasePensionTickets(pensionFrame, input.pensionTickets);
         pensionReceipt = await finalizePensionPurchase(pensionFrame);
       }
 
@@ -67,11 +69,12 @@ export class BrowserDhlotteryProvider {
         `week=${input.week}`,
         `lotto=${input.lottoTickets.map((ticket) => ticket.join('-')).join('|')}`,
         `lottoReceipt=${lottoReceipt}`,
-        `pension=${input.pensionTickets.map((ticket) => `${ticket.group}:${ticket.number}`).join('|')}`,
+        `pension=${actualPensionTickets.map((ticket) => `${ticket.group}:${ticket.number}`).join('|')}`,
         `pensionReceipt=${pensionReceipt}`,
       ];
       return {
         receiptId: `browser-${input.week}-${Date.now()}`,
+        actualPensionTickets,
         details,
       };
     });
@@ -232,7 +235,8 @@ async function finalizeLottoPurchase(frame: any): Promise<string> {
   return (receipt || 'lotto-receipt-missing').trim();
 }
 
-async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Promise<void> {
+async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Promise<PensionTicket[]> {
+  const actualTickets: PensionTicket[] = [];
   for (const ticket of tickets) {
     await selectPensionGroup(frame, ticket.group);
     for (let index = 0; index < ticket.number.length; index += 1) {
@@ -255,14 +259,8 @@ async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Pro
       ticket.number,
       { timeout: 5000 },
     );
-    await frame.locator('.lotto720_btn_confirm_number').click();
-    try {
-      await frame.waitForFunction(() => {
-        const buyNo = (document.querySelector('#frm input[name="BUY_NO"]') as HTMLInputElement | null)?.value ?? '';
-        const buyCnt = (document.querySelector('#frm input[name="BUY_CNT"]') as HTMLInputElement | null)?.value ?? '';
-        return buyNo.length > 0 && buyCnt === '1';
-      }, { timeout: 15000 });
-    } catch {
+    const actualTicket = await verifyPensionTicket(frame, ticket);
+    if (!actualTicket) {
       const state = await collectPensionOrderState(frame);
       throw new Error([
         'Pension ticket verification did not produce a purchasable entry.',
@@ -270,7 +268,9 @@ async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Pro
         ...state,
       ].join('\n'));
     }
+    actualTickets.push(actualTicket);
   }
+  return actualTickets;
 }
 
 async function finalizePensionPurchase(frame: any): Promise<string> {
@@ -366,4 +366,86 @@ async function selectPensionGroup(frame: any, group: number): Promise<void> {
     group,
     { timeout: 5000 },
   );
+}
+
+async function verifyPensionTicket(frame: any, expectedTicket: PensionTicket): Promise<PensionTicket | null> {
+  let dialogMessage: string | null = null;
+  const page = frame.page();
+  const dialogHandler = async (dialog: any) => {
+    dialogMessage = dialog.message();
+    await dialog.accept().catch(() => undefined);
+  };
+  page.on('dialog', dialogHandler);
+  try {
+    await frame.locator('.lotto720_btn_confirm_number').click();
+    const deadline = Date.now() + 15000;
+    let recommendationHandled = false;
+
+    while (Date.now() < deadline) {
+      const state = await frame.evaluate(() => {
+        const valueOf = (selector: string) => (document.querySelector(selector) as HTMLInputElement | null)?.value ?? '';
+        const recommendPopup = document.querySelector('#lotto720_popup_recomand') as HTMLElement | null;
+        const recommendItems = Array.from(document.querySelectorAll('.lotto720_popup_recomand_list input[name="recomandCheckNum"]'))
+          .map((node) => (node as HTMLInputElement).value)
+          .filter(Boolean);
+        return {
+          buyNo: valueOf('#frm input[name="BUY_NO"]'),
+          buyCnt: valueOf('#frm input[name="BUY_CNT"]'),
+          recommendVisible: !!recommendPopup && window.getComputedStyle(recommendPopup).display !== 'none' && recommendPopup.offsetParent !== null,
+          recommendItems,
+        };
+      });
+
+      if (state.buyNo.length > 0 && state.buyCnt === '1') {
+        return parsePensionBuyNo(state.buyNo);
+      }
+
+      if (state.recommendVisible && !recommendationHandled) {
+        if (state.recommendItems.length === 0) {
+          throw new Error(`Pension recommendation popup opened without selectable numbers for ${expectedTicket.group}:${expectedTicket.number}`);
+        }
+        recommendationHandled = true;
+        await frame.evaluate((value: string) => {
+          const input = Array.from(document.querySelectorAll('.lotto720_popup_recomand_list input[name="recomandCheckNum"]'))
+            .find((node) => (node as HTMLInputElement).value === value) as HTMLInputElement | undefined;
+          if (!input) {
+            throw new Error(`Missing recommendation input: ${value}`);
+          }
+          input.checked = true;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          // @ts-ignore
+          recomandNumberSelect();
+        }, state.recommendItems[0]);
+      }
+
+      if (dialogMessage) {
+        throw new Error(`Pension verification alert: ${dialogMessage}`);
+      }
+
+      await frame.waitForTimeout(200);
+    }
+
+    if (dialogMessage) {
+      throw new Error(`Pension verification alert: ${dialogMessage}`);
+    }
+    return null;
+  } finally {
+    page.off('dialog', dialogHandler);
+  }
+}
+
+function parsePensionBuyNo(value: string): PensionTicket | null {
+  const firstTicket = value.split(',').map((item) => item.trim()).find(Boolean);
+  if (!firstTicket) {
+    return null;
+  }
+  const match = firstTicket.match(/^(\d)(\d{6})$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    group: Number(match[1]),
+    number: match[2],
+  };
 }
