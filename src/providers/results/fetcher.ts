@@ -66,12 +66,16 @@ export async function fetchPensionResult(round: number): Promise<PensionResult> 
           if (!rows.length) {
             throw new Error(`Pension result for round ${requestedRound} is not published yet`);
           }
-          const firstPrize = rows.find((candidate) => Number(candidate.wnSqNo) === 1);
+          const roundRows = rows.filter((candidate) => Number(candidate.psltEpsd) === requestedRound);
+          if (!roundRows.length) {
+            throw new Error(`Pension result for round ${requestedRound} is not published yet`);
+          }
+          const firstPrize = roundRows.find((candidate) => Number(candidate.wnSqNo) === 1);
           if (!firstPrize) {
             throw new Error(`Pension result payload is incomplete for round ${requestedRound}`);
           }
-          const secondPrizeNumber = String(rows.find((candidate) => Number(candidate.wnSqNo) === 2)?.wnRnkVl ?? '');
-          const bonusNumber = String(rows.find((candidate) => Number(candidate.wnSqNo) === 21)?.wnRnkVl ?? '');
+          const secondPrizeNumber = String(roundRows.find((candidate) => Number(candidate.wnSqNo) === 2)?.wnRnkVl ?? '');
+          const bonusNumber = String(roundRows.find((candidate) => Number(candidate.wnSqNo) === 21)?.wnRnkVl ?? '');
           const winningNumbers = [
             { group: Number(firstPrize.wnBndNo), number: String(firstPrize.wnRnkVl) },
           ];
@@ -92,7 +96,7 @@ export async function fetchPensionResult(round: number): Promise<PensionResult> 
         });
     }, round);
     return {
-      drawRound: result.drawRound,
+      drawRound: round,
       winningNumbers: dedupeWinningNumbers(result.winningNumbers),
     };
   } finally {
