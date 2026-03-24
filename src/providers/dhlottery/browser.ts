@@ -309,14 +309,21 @@ async function finalizePensionPurchase(frame: any): Promise<string> {
     doOrderRequest();
   });
   await frame.waitForFunction(() => {
-    const popup = document.querySelector('#lotto720_popup_compleate') as HTMLElement | null;
-    if (!popup) {
-      return false;
-    }
-    const style = window.getComputedStyle(popup);
-    return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+    const isVisible = (selector: string) => {
+      const popup = document.querySelector(selector) as HTMLElement | null;
+      if (!popup) {
+        return false;
+      }
+      const style = window.getComputedStyle(popup);
+      return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+    };
+    return isVisible('#lotto720_popup_pay') || isVisible('#lotto720_popup_compleate');
   }, { timeout: 30000 });
-  const receipt = await frame.locator('#orderNo').inputValue().catch(() => '');
+  const receipt = await frame.evaluate(() => {
+    const popupOrderNo = (document.querySelector('#lotto720_popup_pay .orderNo') as HTMLElement | null)?.textContent?.trim() ?? '';
+    const hiddenOrderNo = (document.querySelector('#orderNo') as HTMLInputElement | null)?.value?.trim() ?? '';
+    return popupOrderNo || hiddenOrderNo;
+  }).catch(() => '');
   return (receipt || 'pension-order-missing').trim();
 }
 
