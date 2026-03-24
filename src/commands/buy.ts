@@ -34,6 +34,7 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
 
   if (options.mode === 'live' && !options.force && await hasCurrentWeekPurchase(week.week)) {
     const existing = await loadPurchaseRecord();
+    await savePurchaseRecord(existing);
     await telegram.send(`${config.notifications.live_prefix} buy skipped for ${week.week}\nexisting purchase record already present.`);
     return existing;
   }
@@ -73,8 +74,21 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
         pensionStatus = 'skipped';
       }
       if (lottoTicketsToBuy.length === 0 && pensionTicketsToBuy.length === 0) {
+        const skippedRecord = buildPurchaseRecord({
+          config,
+          week: week.week,
+          mode: options.mode,
+          receiptId,
+          lottoTickets: [],
+          pensionTickets: [],
+          lottoStatus: 'skipped',
+          pensionStatus: 'skipped',
+          lottoRound: week.lottoRound,
+          pensionRound: week.pensionRound,
+        });
+        await savePurchaseRecord(skippedRecord);
         await telegram.send(`${config.notifications.live_prefix} buy skipped for ${week.week}\nlotto and pension purchases already exist in purchase history.`);
-        return;
+        return skippedRecord;
       }
     }
     recordLottoTickets = lottoTicketsToBuy;
@@ -99,31 +113,18 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
     }
   }
 
-  const record: PurchaseRecord = {
+  const record = buildPurchaseRecord({
+    config,
     week: week.week,
-    mode: options.mode === 'smoke' ? 'dry-run' : options.mode,
-    executedAt: new Date().toISOString(),
-    lotto: {
-      mode: config.lotto.mode,
-      tickets: recordLottoTickets,
-      count: recordLottoTickets.length,
-      drawRound: week.lottoRound,
-      status: lottoStatus,
-      receiptId,
-    },
-    pension: {
-      mode: config.pension.mode,
-      tickets: recordPensionTickets,
-      count: recordPensionTickets.length,
-      drawRound: week.pensionRound,
-      status: pensionStatus,
-      receiptId,
-    },
-    runContext: {
-      workflow: 'buy.yml',
-      runner: process.env.GITHUB_ACTIONS ? 'github' : 'local',
-    },
-  };
+    mode: options.mode,
+    receiptId,
+    lottoTickets: recordLottoTickets,
+    pensionTickets: recordPensionTickets,
+    lottoStatus,
+    pensionStatus,
+    lottoRound: week.lottoRound,
+    pensionRound: week.pensionRound,
+  });
 
   await savePurchaseRecord(record);
   const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
@@ -139,4 +140,43 @@ async function hasCurrentWeekPurchase(week: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function buildPurchaseRecord(input: {
+  config: Awaited<ReturnType<typeof loadConfig>>;
+  week: string;
+  mode: BuyOptions['mode'];
+  receiptId: string;
+  lottoTickets: PurchaseRecord['lotto']['tickets'];
+  pensionTickets: PurchaseRecord['pension']['tickets'];
+  lottoStatus: PurchaseRecord['lotto']['status'];
+  pensionStatus: PurchaseRecord['pension']['status'];
+  lottoRound: number;
+  pensionRound: number;
+}): PurchaseRecord {
+  return {
+    week: input.week,
+    mode: input.mode === 'smoke' ? 'dry-run' : input.mode,
+    executedAt: new Date().toISOString(),
+    lotto: {
+      mode: input.config.lotto.mode,
+      tickets: input.lottoTickets,
+      count: input.lottoTickets.length,
+      drawRound: input.lottoRound,
+      status: input.lottoStatus,
+      receiptId: input.receiptId,
+    },
+    pension: {
+      mode: input.config.pension.mode,
+      tickets: input.pensionTickets,
+      count: input.pensionTickets.length,
+      drawRound: input.pensionRound,
+      status: input.pensionStatus,
+      receiptId: input.receiptId,
+    },
+    runContext: {
+      workflow: 'buy.yml',
+      runner: process.env.GITHUB_ACTIONS ? 'github' : 'local',
+    },
+  };
 }

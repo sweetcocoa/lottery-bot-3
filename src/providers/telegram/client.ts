@@ -21,8 +21,18 @@ export class TelegramClient {
         disable_web_page_preview: true,
       }),
     });
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
     if (!response.ok) {
       throw new Error(`Telegram send failed with status ${response.status}`);
+    }
+    if (!payload?.ok) {
+      const description = typeof payload?.description === 'string' ? payload.description : 'unknown error';
+      throw new Error(`Telegram send failed: ${description}`);
     }
   }
 }
