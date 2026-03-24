@@ -33,6 +33,12 @@ npx playwright install chromium
 scripts/local/buy-smoke.sh
 ```
 
+실사이트 로그인 + 구매내역 + 결과 조회만으로 `skip` / `would-buy`만 판정하고, 실제 구매는 하지 않는 live-check 검증:
+
+```sh
+scripts/local/buy-live-check.sh
+```
+
 직접 실행도 가능하다.
 
 ```sh
@@ -40,6 +46,7 @@ set -a
 . ./config/local.env
 set +a
 node --experimental-strip-types src/cli.ts buy --mode=smoke
+node --experimental-strip-types src/cli.ts buy --mode=live-check
 ```
 
 ## 로컬 workflow 검증
@@ -71,7 +78,7 @@ node --experimental-strip-types src/cli.ts summarize --mode=live
 - `buy.yml`
   - runner: `macos-15`
   - schedule: 매주 월요일 09:00 KST
-  - manual mode: `dry-run`, `smoke`, `live`
+  - manual mode: `dry-run`, `smoke`, `live-check`, `live`
   - manual product: `all`, `lotto`, `pension`
 - `results.yml`
   - runner: `ubuntu-latest`
@@ -81,7 +88,8 @@ node --experimental-strip-types src/cli.ts summarize --mode=live
 
 1. `buy.yml`을 `workflow_dispatch mode=dry-run`
 2. `buy.yml`을 `workflow_dispatch mode=smoke`
-3. `buy.yml`을 `workflow_dispatch mode=live`
+3. `buy.yml`을 `workflow_dispatch mode=live-check`
+4. `buy.yml`을 `workflow_dispatch mode=live`
 
 수동 복구가 필요하면 상품만 따로 실행할 수 있다.
 
@@ -105,6 +113,7 @@ node --experimental-strip-types src/cli.ts summarize --mode=live
 
 - `dry-run`은 로그인하지 않는다.
 - `smoke`는 로그인과 구매 페이지 진입만 확인하고 실제 구매는 하지 않는다.
+- `live-check`는 로그인과 구매내역/결과 조회만 수행하고 실제 구매는 하지 않는다.
 - `live`만 실제 번호 선택과 구매 확정을 수행한다.
 - `results.yml`의 live 모드는 동행복권 구매내역을 직접 파싱해 주간 요약을 만든다.
 - `results.yml` live 에도 `DHLOTTERY_USERNAME`, `DHLOTTERY_PASSWORD` secret 이 필요하다.

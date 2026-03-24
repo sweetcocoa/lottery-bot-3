@@ -19,7 +19,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 function printHelp(): void {
   console.log(`Usage:
-  node --experimental-strip-types src/cli.ts buy --mode=dry-run|smoke|live [--product=all|lotto|pension] [--provider=mock|browser] [--force=true|false] [--seed=value] [--target-week=YYYY-Www]
+  node --experimental-strip-types src/cli.ts buy --mode=dry-run|smoke|live-check|live [--product=all|lotto|pension] [--provider=mock|browser] [--force=true|false] [--seed=value] [--target-week=YYYY-Www]
   node --experimental-strip-types src/cli.ts summarize --mode=dry-run|live [--purchase-source=history|local-fixture] [--target-week=YYYY-Www]`);
 }
 
@@ -32,7 +32,7 @@ async function main(): Promise<void> {
 
   if (command === 'buy') {
     await runBuyCommand({
-      mode: (flags.mode as 'dry-run' | 'smoke' | 'live') ?? 'dry-run',
+      mode: (flags.mode as 'dry-run' | 'smoke' | 'live-check' | 'live') ?? 'dry-run',
       product: (flags.product as 'all' | 'lotto' | 'pension' | undefined) ?? 'all',
       provider: flags.provider as 'mock' | 'browser' | undefined,
       force: flags.force === 'true',

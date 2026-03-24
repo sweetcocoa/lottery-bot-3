@@ -8,12 +8,19 @@ import { MockDhlotteryProvider } from '../providers/dhlottery/mock.ts';
 import { TelegramClient } from '../providers/telegram/client.ts';
 
 export interface BuyOptions {
-  mode: 'dry-run' | 'smoke' | 'live';
+  mode: 'dry-run' | 'smoke' | 'live' | 'live-check';
   product?: 'all' | 'lotto' | 'pension';
   provider?: 'mock' | 'browser';
   force?: boolean;
   seed?: string;
   targetWeek?: string;
+}
+
+export interface LiveBuyDecision {
+  lottoShouldBuy: boolean;
+  pensionShouldBuy: boolean;
+  lottoReason: string;
+  pensionReason: string;
 }
 
 export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord | void> {
@@ -29,7 +36,6 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
   let pensionStatus: 'purchased' | 'simulated' | 'skipped' = pensionTickets.length > 0 ? (options.mode === 'live' ? 'purchased' : 'simulated') : 'skipped';
   const provider = options.provider ?? (options.mode === 'dry-run' ? 'mock' : 'browser');
   const telegram = new TelegramClient();
-  const skipReasons: string[] = [];
 
   let receiptId = createReceiptId(provider, week.week);
   if (provider === 'mock') {
@@ -48,7 +54,7 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
     }
     let lottoTicketsToBuy = lottoTickets;
     let pensionTicketsToBuy = pensionTickets;
-    if (options.mode === 'live' && !options.force) {
+    if ((options.mode === 'live' || options.mode === 'live-check') && !options.force) {
       const history = new DhlotteryHistoryProvider();
       const unsettled = await history.loadUnsettledPurchasePresence({
         username,
@@ -56,21 +62,36 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
         checkLotto: lottoTicketsToBuy.length > 0,
         checkPension: pensionTicketsToBuy.length > 0,
       });
-      if (lottoTicketsToBuy.length > 0 && unsettled.lottoUnsettled) {
+      const decision = evaluateLiveBuyDecision({
+        product,
+        requestedLotto: lottoTicketsToBuy.length > 0,
+        requestedPension: pensionTicketsToBuy.length > 0,
+        unsettled,
+      });
+      if (!decision.lottoShouldBuy) {
         lottoTicketsToBuy = [];
         lottoStatus = 'skipped';
-        skipReasons.push(`lotto=skipped(unsettled round ${unsettled.lottoRound})`);
       }
-      if (pensionTicketsToBuy.length > 0 && unsettled.pensionUnsettled) {
+      if (!decision.pensionShouldBuy) {
         pensionTicketsToBuy = [];
         pensionStatus = 'skipped';
-        skipReasons.push(`pension=skipped(unsettled round ${unsettled.pensionRound})`);
+      }
+      if (options.mode === 'live-check') {
+        const message = [
+          `${config.notifications.live_prefix} [CHECK] buy decision for ${week.week}`,
+          `product=${product}`,
+          `lotto=${decision.lottoReason}`,
+          `pension=${decision.pensionReason}`,
+        ].join('\n');
+        await telegram.send(message);
+        return;
       }
       if (lottoTicketsToBuy.length === 0 && pensionTicketsToBuy.length === 0) {
         await telegram.send([
           `${config.notifications.live_prefix} buy skipped for ${week.week}`,
           `product=${product}`,
-          ...skipReasons,
+          `lotto=${decision.lottoReason}`,
+          `pension=${decision.pensionReason}`,
         ].join('\n'));
         return;
       }
@@ -160,6 +181,43 @@ function buildPurchaseRecord(input: {
       runner: process.env.GITHUB_ACTIONS ? 'github' : 'local',
     },
   };
+}
+
+export function evaluateLiveBuyDecision(input: {
+  product: 'all' | 'lotto' | 'pension';
+  requestedLotto: boolean;
+  requestedPension: boolean;
+  unsettled: {
+    lottoUnsettled: boolean;
+    pensionUnsettled: boolean;
+    lottoRound: number | null;
+    pensionRound: number | null;
+  };
+}): LiveBuyDecision {
+  const lottoShouldBuy = input.requestedLotto && !input.unsettled.lottoUnsettled;
+  const pensionShouldBuy = input.requestedPension && !input.unsettled.pensionUnsettled;
+
+  return {
+    lottoShouldBuy,
+    pensionShouldBuy,
+    lottoReason: describeDecision('lotto', input.requestedLotto, lottoShouldBuy, input.unsettled.lottoRound),
+    pensionReason: describeDecision('pension', input.requestedPension, pensionShouldBuy, input.unsettled.pensionRound),
+  };
+}
+
+function describeDecision(
+  label: 'lotto' | 'pension',
+  requested: boolean,
+  shouldBuy: boolean,
+  unsettledRound: number | null,
+): string {
+  if (!requested) {
+    return `${label}=not-requested`;
+  }
+  if (!shouldBuy) {
+    return `${label}=skipped(unsettled round ${unsettledRound ?? 'unknown'})`;
+  }
+  return `${label}=would-buy`;
 }
 
 function formatLottoSummary(
