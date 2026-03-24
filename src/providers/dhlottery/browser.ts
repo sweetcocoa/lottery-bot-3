@@ -235,15 +235,41 @@ async function finalizeLottoPurchase(frame: any): Promise<string> {
 async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Promise<void> {
   for (const ticket of tickets) {
     await selectPensionGroup(frame, ticket.group);
-    for (const digit of ticket.number.split('')) {
-      await frame.locator(`.lotto720_select_number_wrapper a:has-text("${digit}")`).first().click();
-      await frame.waitForTimeout(100);
+    for (let index = 0; index < ticket.number.length; index += 1) {
+      const digit = ticket.number[index];
+      await frame.locator(`.lotto720_select_number_wrapper .numsgroup.num${digit}`).click();
+      await frame.waitForFunction(
+        ({ targetIndex, targetDigit }: { targetIndex: number; targetDigit: string }) => {
+          const input = document.querySelector(`#num${targetIndex}`) as HTMLInputElement | null;
+          return input?.value === targetDigit;
+        },
+        { targetIndex: index + 1, targetDigit: digit },
+        { timeout: 5000 },
+      );
     }
-    await frame.evaluate(() => {
-      // @ts-ignore
-      doVerify();
-    });
-    await frame.waitForTimeout(1000);
+    await frame.waitForFunction(
+      (expectedNumber: string) => {
+        const selectedNumber = (document.querySelector('#selnum') as HTMLInputElement | null)?.value ?? '';
+        return selectedNumber === expectedNumber;
+      },
+      ticket.number,
+      { timeout: 5000 },
+    );
+    await frame.locator('.lotto720_btn_confirm_number').click();
+    try {
+      await frame.waitForFunction(() => {
+        const buyNo = (document.querySelector('#frm input[name="BUY_NO"]') as HTMLInputElement | null)?.value ?? '';
+        const buyCnt = (document.querySelector('#frm input[name="BUY_CNT"]') as HTMLInputElement | null)?.value ?? '';
+        return buyNo.length > 0 && buyCnt === '1';
+      }, { timeout: 15000 });
+    } catch {
+      const state = await collectPensionOrderState(frame);
+      throw new Error([
+        'Pension ticket verification did not produce a purchasable entry.',
+        `expectedTicket=${ticket.group}:${ticket.number}`,
+        ...state,
+      ].join('\n'));
+    }
   }
 }
 

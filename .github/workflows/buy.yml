@@ -40,6 +40,9 @@ jobs:
       DHLOTTERY_PASSWORD: ${{ secrets.DHLOTTERY_PASSWORD }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      BUY_MODE: ${{ github.event_name == 'schedule' && 'live' || inputs.mode }}
+      BUY_PRODUCT: ${{ github.event_name == 'schedule' && 'all' || inputs.product }}
+      BUY_FORCE: ${{ github.event_name == 'schedule' && 'false' || inputs.force }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,11 +62,12 @@ jobs:
         run: mkdir -p artifacts/diagnostics
 
       - name: Run buy command
+        id: run_buy
         run: |
           node --experimental-strip-types src/cli.ts buy \
-            --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }} \
-            --product=${{ github.event_name == 'schedule' && 'all' || inputs.product }} \
-            --force=${{ github.event_name == 'schedule' && 'false' || inputs.force }}
+            --mode=${BUY_MODE} \
+            --product=${BUY_PRODUCT} \
+            --force=${BUY_FORCE}
 
       - name: Upload purchase record
         if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
@@ -80,3 +84,7 @@ jobs:
           name: buy-diagnostics-${{ github.run_id }}
           path: artifacts/diagnostics/
           if-no-files-found: warn
+
+      - name: Send failure alert
+        if: ${{ failure() && env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_CHAT_ID != '' }}
+        run: node --experimental-strip-types src/scripts/send-buy-failure-alert.ts
