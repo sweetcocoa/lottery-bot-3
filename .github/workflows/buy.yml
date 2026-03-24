@@ -69,16 +69,8 @@ jobs:
             --product=${BUY_PRODUCT} \
             --force=${BUY_FORCE}
 
-      - name: Upload purchase record
-        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: purchase-record
-          path: artifacts/purchase-record.json
-          if-no-files-found: error
-
       - name: Upload diagnostics
-        if: ${{ always() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'smoke') }}
+        if: ${{ failure() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'smoke') }}
         uses: actions/upload-artifact@v4
         with:
           name: buy-diagnostics-${{ github.run_id }}

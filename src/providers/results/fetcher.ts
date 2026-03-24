@@ -100,6 +100,10 @@ export async function fetchPensionResult(round: number): Promise<PensionResult> 
   }
 }
 
+export function isResultNotPublishedError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('is not published yet');
+}
+
 function dedupeWinningNumbers(items: Array<{ group: number; number: string }>): Array<{ group: number; number: string }> {
   const seen = new Set<string>();
   return items.filter((item) => {

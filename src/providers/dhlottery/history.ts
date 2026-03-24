@@ -3,6 +3,7 @@ import type { AppConfig } from '../../config/schema.ts';
 import type { PurchaseRecord } from '../../core/purchase-record.ts';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
 import { createBrowserSession, login } from './session.ts';
+import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError } from '../results/fetcher.ts';
 
 const LEDGER_URL = 'https://www.dhlottery.co.kr/mypage/mylotteryledger';
 
@@ -18,6 +19,13 @@ interface HistoryInput {
 export interface WeeklyPurchasePresence {
   lottoCount: number;
   pensionCount: number;
+}
+
+export interface UnsettledPurchasePresence {
+  lottoUnsettled: boolean;
+  pensionUnsettled: boolean;
+  lottoRound: number | null;
+  pensionRound: number | null;
 }
 
 interface LedgerEntry {
@@ -100,6 +108,31 @@ export class DhlotteryHistoryProvider {
     }
   }
 
+  async loadUnsettledPurchasePresence(input: {
+    username: string;
+    password: string;
+    checkLotto?: boolean;
+    checkPension?: boolean;
+  }): Promise<UnsettledPurchasePresence> {
+    const { browser, page } = await createBrowserSession();
+    let latestRounds;
+    try {
+      await login(page, input.username, input.password);
+      await openLedgerPage(page, '2002-01-01', currentKstDate());
+      const entries = await loadLedgerEntries(page);
+      latestRounds = resolveLatestProductRounds(entries);
+    } finally {
+      await browser.close();
+    }
+
+    return resolveUnsettledPurchasePresence({
+      lottoRound: latestRounds.lottoRound,
+      pensionRound: latestRounds.pensionRound,
+      checkLotto: input.checkLotto,
+      checkPension: input.checkPension,
+    });
+  }
+
   async loadWeeklyPurchaseRecord(input: HistoryInput): Promise<PurchaseRecord> {
     const { browser, page } = await createBrowserSession();
     await mkdir('artifacts/diagnostics', { recursive: true });
@@ -162,8 +195,62 @@ export class DhlotteryHistoryProvider {
   }
 }
 
+export function resolveLatestProductRounds(entries: Array<{ productCode: string; round: number }>): { lottoRound: number | null; pensionRound: number | null } {
+  let lottoRound: number | null = null;
+  let pensionRound: number | null = null;
+
+  for (const entry of entries) {
+    if (!Number.isInteger(entry.round) || entry.round <= 0) {
+      continue;
+    }
+    if (entry.productCode === 'LO40') {
+      lottoRound = lottoRound === null ? entry.round : Math.max(lottoRound, entry.round);
+    }
+    if (entry.productCode === 'LP72') {
+      pensionRound = pensionRound === null ? entry.round : Math.max(pensionRound, entry.round);
+    }
+  }
+
+  return { lottoRound, pensionRound };
+}
+
+export async function resolveUnsettledPurchasePresence(input: {
+  lottoRound: number | null;
+  pensionRound: number | null;
+  checkLotto?: boolean;
+  checkPension?: boolean;
+  fetchLottoResultFn?: typeof fetchLottoResult;
+  fetchPensionResultFn?: typeof fetchPensionResult;
+}): Promise<UnsettledPurchasePresence> {
+  const fetchLottoResultFn = input.fetchLottoResultFn ?? fetchLottoResult;
+  const fetchPensionResultFn = input.fetchPensionResultFn ?? fetchPensionResult;
+  const shouldCheckLotto = input.checkLotto ?? true;
+  const shouldCheckPension = input.checkPension ?? true;
+
+  const [lottoUnsettled, pensionUnsettled] = await Promise.all([
+    shouldCheckLotto ? isRoundUnsettled(input.lottoRound, fetchLottoResultFn) : Promise.resolve(false),
+    shouldCheckPension ? isRoundUnsettled(input.pensionRound, fetchPensionResultFn) : Promise.resolve(false),
+  ]);
+
+  return {
+    lottoUnsettled,
+    pensionUnsettled,
+    lottoRound: input.lottoRound,
+    pensionRound: input.pensionRound,
+  };
+}
+
 async function writeDiagnostics(path: string, lines: string[]): Promise<void> {
   await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+}
+
+function currentKstDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 }
 
 function isWithinDateRange(value: string, startDate: string, endDate: string): boolean {
@@ -236,6 +323,24 @@ async function loadLedgerEntries(page: any): Promise<LedgerEntry[]> {
       return '';
     }
   });
+}
+
+async function isRoundUnsettled(
+  round: number | null,
+  fetchResult: (round: number) => Promise<unknown>,
+): Promise<boolean> {
+  if (!round) {
+    return false;
+  }
+  try {
+    await fetchResult(round);
+    return false;
+  } catch (error) {
+    if (isResultNotPublishedError(error)) {
+      return true;
+    }
+    throw error;
+  }
 }
 
 async function extractLottoTickets(page: any, entries: LedgerEntry[]): Promise<LottoTicket[]> {

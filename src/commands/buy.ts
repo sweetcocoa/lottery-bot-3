@@ -1,8 +1,6 @@
 import { loadConfig } from '../config/schema.ts';
 import { getWeekContext } from '../core/draw-calendar.ts';
-import { access } from 'node:fs/promises';
-import { constants } from 'node:fs';
-import { createReceiptId, loadPurchaseRecord, savePurchaseRecord, type PurchaseRecord } from '../core/purchase-record.ts';
+import { createReceiptId, savePurchaseRecord, type PurchaseRecord } from '../core/purchase-record.ts';
 import { resolveLottoTickets, resolvePensionTickets } from '../core/random-picks.ts';
 import { BrowserDhlotteryProvider } from '../providers/dhlottery/browser.ts';
 import { DhlotteryHistoryProvider } from '../providers/dhlottery/history.ts';
@@ -31,13 +29,7 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
   let pensionStatus: 'purchased' | 'simulated' | 'skipped' = pensionTickets.length > 0 ? (options.mode === 'live' ? 'purchased' : 'simulated') : 'skipped';
   const provider = options.provider ?? (options.mode === 'dry-run' ? 'mock' : 'browser');
   const telegram = new TelegramClient();
-
-  if (options.mode === 'live' && !options.force && await hasCurrentWeekPurchase(week.week)) {
-    const existing = await loadPurchaseRecord();
-    await savePurchaseRecord(existing);
-    await telegram.send(`${config.notifications.live_prefix} buy skipped for ${week.week}\nexisting purchase record already present.`);
-    return existing;
-  }
+  const skipReasons: string[] = [];
 
   let receiptId = createReceiptId(provider, week.week);
   if (provider === 'mock') {
@@ -58,37 +50,29 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
     let pensionTicketsToBuy = pensionTickets;
     if (options.mode === 'live' && !options.force) {
       const history = new DhlotteryHistoryProvider();
-      const presence = await history.loadWeeklyPurchasePresence({
+      const unsettled = await history.loadUnsettledPurchasePresence({
         username,
         password,
-        week: week.week,
-        weekStartDate: week.weekStartDate,
-        weekEndDate: week.weekEndDate,
+        checkLotto: lottoTicketsToBuy.length > 0,
+        checkPension: pensionTicketsToBuy.length > 0,
       });
-      if (lottoTicketsToBuy.length > 0 && presence.lottoCount > 0) {
+      if (lottoTicketsToBuy.length > 0 && unsettled.lottoUnsettled) {
         lottoTicketsToBuy = [];
         lottoStatus = 'skipped';
+        skipReasons.push(`lotto=skipped(unsettled round ${unsettled.lottoRound})`);
       }
-      if (pensionTicketsToBuy.length > 0 && presence.pensionCount > 0) {
+      if (pensionTicketsToBuy.length > 0 && unsettled.pensionUnsettled) {
         pensionTicketsToBuy = [];
         pensionStatus = 'skipped';
+        skipReasons.push(`pension=skipped(unsettled round ${unsettled.pensionRound})`);
       }
       if (lottoTicketsToBuy.length === 0 && pensionTicketsToBuy.length === 0) {
-        const skippedRecord = buildPurchaseRecord({
-          config,
-          week: week.week,
-          mode: options.mode,
-          receiptId,
-          lottoTickets: [],
-          pensionTickets: [],
-          lottoStatus: 'skipped',
-          pensionStatus: 'skipped',
-          lottoRound: week.lottoRound,
-          pensionRound: week.pensionRound,
-        });
-        await savePurchaseRecord(skippedRecord);
-        await telegram.send(`${config.notifications.live_prefix} buy skipped for ${week.week}\nlotto and pension purchases already exist in purchase history.`);
-        return skippedRecord;
+        await telegram.send([
+          `${config.notifications.live_prefix} buy skipped for ${week.week}`,
+          `product=${product}`,
+          ...skipReasons,
+        ].join('\n'));
+        return;
       }
     }
     recordLottoTickets = lottoTicketsToBuy;
@@ -126,20 +110,17 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
     pensionRound: week.pensionRound,
   });
 
-  await savePurchaseRecord(record);
-  const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
-  await telegram.send(`${prefix} buy completed for ${week.week}\nproduct=${product}\nlotto=${recordLottoTickets.map((ticket) => ticket.join('-')).join(' | ') || 'skipped'}\npension=${recordPensionTickets.map((ticket) => `${ticket.group}조 ${ticket.number}`).join(' | ') || 'skipped'}`);
-  return record;
-}
-
-async function hasCurrentWeekPurchase(week: string): Promise<boolean> {
-  try {
-    await access('artifacts/purchase-record.json', constants.F_OK);
-    const existing = await loadPurchaseRecord();
-    return existing.week === week && existing.mode === 'live';
-  } catch {
-    return false;
+  if (options.mode !== 'live') {
+    await savePurchaseRecord(record);
   }
+  const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
+  await telegram.send([
+    `${prefix} buy completed for ${week.week}`,
+    `product=${product}`,
+    `lotto=${formatLottoSummary(recordLottoTickets, lottoStatus)}`,
+    `pension=${formatPensionSummary(recordPensionTickets, pensionStatus)}`,
+  ].join('\n'));
+  return record;
 }
 
 function buildPurchaseRecord(input: {
@@ -179,4 +160,24 @@ function buildPurchaseRecord(input: {
       runner: process.env.GITHUB_ACTIONS ? 'github' : 'local',
     },
   };
+}
+
+function formatLottoSummary(
+  tickets: PurchaseRecord['lotto']['tickets'],
+  status: PurchaseRecord['lotto']['status'],
+): string {
+  if (status === 'skipped') {
+    return 'skipped';
+  }
+  return tickets.map((ticket) => ticket.join('-')).join(' | ') || 'skipped';
+}
+
+function formatPensionSummary(
+  tickets: PurchaseRecord['pension']['tickets'],
+  status: PurchaseRecord['pension']['status'],
+): string {
+  if (status === 'skipped') {
+    return 'skipped';
+  }
+  return tickets.map((ticket) => `${ticket.group}조 ${ticket.number}`).join(' | ') || 'skipped';
 }
