@@ -41,6 +41,7 @@ jobs:
       DHLOTTERY_PASSWORD: ${{ secrets.DHLOTTERY_PASSWORD }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      PLAYWRIGHT_CHROMIUM_CHANNEL: chrome
       BUY_MODE: ${{ github.event_name == 'schedule' && 'live' || inputs.mode }}
       BUY_PRODUCT: ${{ github.event_name == 'schedule' && 'all' || inputs.product }}
       BUY_FORCE: ${{ github.event_name == 'schedule' && 'false' || inputs.force }}
@@ -55,9 +56,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-fund --no-audit
 
-      - name: Install Playwright Chromium
+      - name: Verify system Chrome
         if: ${{ github.event_name == 'schedule' || inputs.mode == 'smoke' || inputs.mode == 'live-check' || inputs.mode == 'live' }}
-        run: npx playwright install chromium
+        run: |
+          test -d "/Applications/Google Chrome.app"
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
 
       - name: Ensure artifacts dir
         run: mkdir -p artifacts/diagnostics

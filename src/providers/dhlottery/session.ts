@@ -18,7 +18,11 @@ export async function importPlaywright(): Promise<any> {
 
 export async function createBrowserSession(): Promise<{ browser: any; context: any; page: any }> {
   const playwright = await importPlaywright();
-  const browser = await playwright.chromium.launch({ headless: true });
+  const launchOptions: Record<string, unknown> = { headless: true };
+  if (process.env.PLAYWRIGHT_CHROMIUM_CHANNEL) {
+    launchOptions.channel = process.env.PLAYWRIGHT_CHROMIUM_CHANNEL;
+  }
+  const browser = await playwright.chromium.launch(launchOptions);
   const context = await browser.newContext(CONTEXT_OPTIONS);
   const page = await context.newPage();
   return { browser, context, page };
