@@ -24,6 +24,7 @@ jobs:
       DHLOTTERY_PASSWORD: ${{ secrets.DHLOTTERY_PASSWORD }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      PLAYWRIGHT_CHROMIUM_CHANNEL: chrome
     steps:
       - uses: actions/checkout@v4
 
@@ -35,9 +36,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-fund --no-audit
 
-      - name: Install Playwright browser
+      - name: Verify system Chrome
         if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
-        run: npx playwright install --with-deps chromium
+        run: |
+          test -d "/Applications/Google Chrome.app"
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
 
       - name: Ensure artifacts dir
         run: mkdir -p artifacts
