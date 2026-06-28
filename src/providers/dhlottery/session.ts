@@ -22,10 +22,35 @@ export async function createBrowserSession(): Promise<{ browser: any; context: a
   if (process.env.PLAYWRIGHT_CHROMIUM_CHANNEL) {
     launchOptions.channel = process.env.PLAYWRIGHT_CHROMIUM_CHANNEL;
   }
-  const browser = await playwright.chromium.launch(launchOptions);
+  const browser = await launchChromium(playwright, launchOptions);
   const context = await browser.newContext(CONTEXT_OPTIONS);
   const page = await context.newPage();
   return { browser, context, page };
+}
+
+async function launchChromium(playwright: any, launchOptions: Record<string, unknown>): Promise<any> {
+  try {
+    return await playwright.chromium.launch(launchOptions);
+  } catch (error) {
+    if (launchOptions.channel || !isMissingBundledBrowserError(error)) {
+      throw error;
+    }
+    try {
+      return await playwright.chromium.launch({ ...launchOptions, channel: 'chrome' });
+    } catch (fallbackError) {
+      const original = error instanceof Error ? error.message : String(error);
+      const fallback = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      throw new Error(`Unable to launch Playwright Chromium. bundled=${original}; chromeFallback=${fallback}`);
+    }
+  }
+}
+
+function isMissingBundledBrowserError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message.includes('Executable doesn\'t exist')
+    || error.message.includes('playwright install');
 }
 
 export async function login(page: any, username: string, password: string): Promise<void> {
