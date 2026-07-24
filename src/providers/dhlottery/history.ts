@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import type { AppConfig } from '../../config/schema.ts';
 import type { PurchaseRecord } from '../../core/purchase-record.ts';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
-import { createBrowserSession, login } from './session.ts';
+import { createBrowserSession, gotoWithRetries, login } from './session.ts';
 import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError } from '../results/fetcher.ts';
 
 const LEDGER_URL = 'https://www.dhlottery.co.kr/mypage/mylotteryledger';
@@ -272,7 +272,7 @@ function resolveSingleRound(entries: LedgerEntry[], productCode: string, label: 
 }
 
 async function openLedgerPage(page: any, startDate: string, endDate: string): Promise<void> {
-  await page.goto(LEDGER_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await gotoWithRetries(page, LEDGER_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForFunction(
     () => typeof (window as any).MyLotteryledgerM?.fn_selectMyLotteryledger === 'function',
     { timeout: 15000 },

@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
-import { createBrowserSession, login } from './session.ts';
+import { createBrowserSession, gotoWithRetries, login } from './session.ts';
 
 interface BrowserInput {
   username: string;
@@ -163,7 +163,7 @@ async function collectPageDetails(page: any): Promise<string[]> {
 }
 
 async function openPurchasePage(page: any): Promise<any> {
-  await page.goto(LOTTO_INTRO_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await gotoWithRetries(page, LOTTO_INTRO_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.locator('#btnBuyLt645').waitFor({ state: 'visible', timeout: 10000 });
 
   const popupPromise = page.waitForEvent('popup', { timeout: 5000 }).catch(() => null);
@@ -178,7 +178,7 @@ async function openPurchasePage(page: any): Promise<any> {
   }
 
   const directPage = await page.context().newPage();
-  await directPage.goto(LOTTO_PURCHASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await gotoWithRetries(directPage, LOTTO_PURCHASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
   if (await looksLikePurchasePage(directPage)) {
     return directPage;
   }
@@ -217,7 +217,7 @@ async function switchToPensionTab(popup: any): Promise<void> {
     return;
   }
 
-  await popup.goto(PENSION_PURCHASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await gotoWithRetries(popup, PENSION_PURCHASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 }
 
 async function purchaseLottoTickets(frame: any, tickets: LottoTicket[]): Promise<void> {

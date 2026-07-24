@@ -1,4 +1,4 @@
-import { createBrowserSession } from '../dhlottery/session.ts';
+import { createBrowserSession, gotoWithRetries } from '../dhlottery/session.ts';
 
 export interface LottoResult {
   drawRound: number;
@@ -17,7 +17,7 @@ const PENSION_RESULT_URL = 'https://www.dhlottery.co.kr/pt720/result';
 export async function fetchLottoResult(round: number): Promise<LottoResult> {
   const { browser, page } = await createBrowserSession();
   try {
-    await page.goto(LOTTO_RESULT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await gotoWithRetries(page, LOTTO_RESULT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const result = await page.evaluate(async (requestedRound: number) => {
       const response = await fetch(`/lt645/selectPstLt645InfoNew.do?srchDir=center&srchLtEpsd=${requestedRound}`, {
         credentials: 'same-origin',
@@ -52,7 +52,7 @@ export async function fetchLottoResult(round: number): Promise<LottoResult> {
 export async function fetchPensionResult(round: number): Promise<PensionResult> {
   const { browser, page } = await createBrowserSession();
   try {
-    await page.goto(PENSION_RESULT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await gotoWithRetries(page, PENSION_RESULT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const result = await page.evaluate((requestedRound: number) => {
       return fetch(`/pt720/selectPstPt720Info.do?srchPsltEpsd=${requestedRound}`, {
         credentials: 'same-origin',

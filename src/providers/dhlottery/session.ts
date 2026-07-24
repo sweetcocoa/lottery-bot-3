@@ -1,6 +1,7 @@
 const LOGIN_URL = 'https://www.dhlottery.co.kr/login';
 const EXPIRED_PASSWORD_PATH = '/mbrsrvc/ExpryPswdNoti';
 const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+const NAVIGATION_ATTEMPTS = 3;
 
 const CONTEXT_OPTIONS = {
   viewport: { width: 1440, height: 1024 },
@@ -29,6 +30,22 @@ export async function createBrowserSession(): Promise<{ browser: any; context: a
   return { browser, context, page };
 }
 
+export async function gotoWithRetries(page: any, url: string, options: Record<string, unknown>): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= NAVIGATION_ATTEMPTS; attempt += 1) {
+    try {
+      await page.goto(url, options);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < NAVIGATION_ATTEMPTS) {
+        await page.waitForTimeout(attempt * 1000);
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function launchChromium(playwright: any, launchOptions: Record<string, unknown>): Promise<any> {
   try {
     return await playwright.chromium.launch(launchOptions);
@@ -55,7 +72,7 @@ function isMissingBundledBrowserError(error: unknown): boolean {
 }
 
 export async function login(page: any, username: string, password: string): Promise<void> {
-  await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await gotoWithRetries(page, LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForFunction(
     () => typeof (window as any).login === 'function'
       && typeof (window as any).fnRSAencrypt === 'function'
