@@ -87,8 +87,7 @@ export async function login(page: any, username: string, password: string): Prom
   if (finalUrl.includes(EXPIRED_PASSWORD_PATH)) {
     throw new Error('Dhlottery password has expired. Change the password on dhlottery.co.kr, then update the DHLOTTERY_PASSWORD GitHub secret.');
   }
-  const isLoggedIn = await page.evaluate(() => Boolean((window as any).isLoggedIn)).catch(() => false);
-  if (!isLoggedIn) {
+  if (finalUrl.includes('/login')) {
     throw new Error(`Login did not establish an authenticated Dhlottery session. finalUrl=${finalUrl}`);
   }
 }
