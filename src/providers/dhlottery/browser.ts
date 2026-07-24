@@ -295,8 +295,11 @@ async function finalizePensionPurchase(frame: any): Promise<string> {
     waitForVisiblePensionPopup(frame, '#lotto720_popup_confirm', 10000).then(() => null),
     confirmDialog,
   ]);
-  if (confirmation) {
+  if (confirmation && !isPensionPurchaseConfirmation(confirmation)) {
     throw new Error(`Pension order alert before confirmation: ${confirmation}`);
+  }
+  if (confirmation) {
+    await waitForVisiblePensionPopup(frame, '#lotto720_popup_confirm', 10000).catch(() => undefined);
   }
 
   const confirmVisible = await isPensionPopupVisible(frame, '#lotto720_popup_confirm');
@@ -345,6 +348,10 @@ async function waitForDialog(page: any, timeout: number): Promise<string | null>
       return message;
     })
     .catch(() => null);
+}
+
+function isPensionPurchaseConfirmation(message: string): boolean {
+  return message.includes('모든조 구매') && message.includes('정말 구매하시겠습니까?');
 }
 
 async function waitForVisiblePensionPopup(frame: any, selector: string, timeout: number): Promise<void> {
