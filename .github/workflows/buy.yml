@@ -32,7 +32,7 @@ on:
 
 jobs:
   buy:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     permissions:
       actions: read
       contents: read
