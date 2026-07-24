@@ -1,4 +1,5 @@
 const LOGIN_URL = 'https://www.dhlottery.co.kr/login';
+const EXPIRED_PASSWORD_PATH = '/mbrsrvc/ExpryPswdNoti';
 const DESKTOP_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
 const CONTEXT_OPTIONS = {
@@ -76,9 +77,18 @@ export async function login(page: any, username: string, password: string): Prom
     // @ts-ignore
     login();
   }, { username, password });
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(1000);
+  await page.waitForFunction(
+    () => window.location.pathname !== '/login',
+    { timeout: 15000 },
+  ).catch(() => undefined);
 
-  if (page.url().includes('/login')) {
-    throw new Error(`Login did not complete successfully. finalUrl=${page.url()}`);
+  const finalUrl = page.url();
+  if (finalUrl.includes(EXPIRED_PASSWORD_PATH)) {
+    throw new Error('Dhlottery password has expired. Change the password on dhlottery.co.kr, then update the DHLOTTERY_PASSWORD GitHub secret.');
+  }
+  const isLoggedIn = await page.evaluate(() => Boolean((window as any).isLoggedIn)).catch(() => false);
+  if (!isLoggedIn) {
+    throw new Error(`Login did not establish an authenticated Dhlottery session. finalUrl=${finalUrl}`);
   }
 }

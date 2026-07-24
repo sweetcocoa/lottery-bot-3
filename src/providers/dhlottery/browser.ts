@@ -86,7 +86,7 @@ async function runBrowserFlow(
   input: BrowserInput,
   action: (session: { page: any }) => Promise<{ details: string[]; receiptId?: string }>,
 ): Promise<BrowserArtifacts> {
-  const { browser, page } = await createBrowserSession();
+  const { browser, context, page } = await createBrowserSession();
   await mkdir('artifacts/diagnostics', { recursive: true });
   const diagnosticsPath = `artifacts/diagnostics/browser-${mode}-${input.week}.txt`;
   const screenshotPath = `artifacts/diagnostics/browser-${mode}-${input.week}.png`;
@@ -100,8 +100,7 @@ async function runBrowserFlow(
       receiptId: result.receiptId,
     };
   } catch (error) {
-    const details = await collectPageDetails(page);
-    await captureGameFrameArtifacts(page, `artifacts/diagnostics/browser-${mode}-${input.week}`);
+    const details = await captureOpenPageArtifacts(context, `artifacts/diagnostics/browser-${mode}-${input.week}`);
     await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
     await writeDiagnostics(diagnosticsPath, [
       `mode=${mode}`,
@@ -133,6 +132,17 @@ async function captureGameFrameArtifacts(page: any, basePath: string): Promise<v
   if (html) {
     await writeFile(`${basePath}-frame.html`, html, 'utf8').catch(() => undefined);
   }
+}
+
+async function captureOpenPageArtifacts(context: any, basePath: string): Promise<string[]> {
+  const pages = context.pages();
+  const details = await Promise.all(pages.map(async (candidate: any, index: number) => {
+    await captureGameFrameArtifacts(candidate, `${basePath}-page-${index}`);
+    await candidate.screenshot({ path: `${basePath}-page-${index}.png`, fullPage: true }).catch(() => undefined);
+    const pageDetails = await collectPageDetails(candidate);
+    return [`page=${index}`, ...pageDetails];
+  }));
+  return details.flat();
 }
 
 async function collectPageDetails(page: any): Promise<string[]> {
@@ -178,11 +188,12 @@ async function openPurchasePage(page: any): Promise<any> {
 }
 
 async function looksLikePurchasePage(page: any): Promise<boolean> {
-  if (page.url().includes('m.dhlottery.co.kr')) {
+  if (page.url().includes('m.dhlottery.co.kr') || page.url().includes('/login')) {
     return false;
   }
-  const hasFrame = await page.locator('#ifrm_tab').count().catch(() => 0);
-  return hasFrame > 0 || page.url().includes('TotalGame.jsp');
+  const gameFrame = page.locator('#ifrm_tab');
+  await gameFrame.waitFor({ state: 'attached', timeout: 10000 }).catch(() => undefined);
+  return (await gameFrame.count().catch(() => 0)) > 0;
 }
 
 async function resolveGameFrame(popup: any): Promise<any> {
