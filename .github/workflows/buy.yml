@@ -68,10 +68,11 @@ jobs:
       - name: Run buy command
         id: run_buy
         run: |
+          set -o pipefail
           node --experimental-strip-types src/cli.ts buy \
             --mode=${BUY_MODE} \
             --product=${BUY_PRODUCT} \
-            --force=${BUY_FORCE}
+            --force=${BUY_FORCE} 2>&1 | tee artifacts/diagnostics/buy-command.log
 
       - name: Upload diagnostics
         if: ${{ failure() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'live-check' || inputs.mode == 'smoke') }}

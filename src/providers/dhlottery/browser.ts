@@ -275,39 +275,90 @@ async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Pro
 
 async function finalizePensionPurchase(frame: any): Promise<string> {
   const page = frame.page();
-  const dialogPromise = page.waitForEvent('dialog', { timeout: 3000 })
+  const confirmDialog = waitForDialog(page, 10000);
+  await frame.evaluate(() => {
+    // @ts-ignore
+    doOrder();
+  });
+  const confirmation = await Promise.race([
+    waitForVisiblePensionPopup(frame, '#lotto720_popup_confirm', 10000).then(() => null),
+    confirmDialog,
+  ]);
+  if (confirmation) {
+    throw new Error(`Pension order alert before confirmation: ${confirmation}`);
+  }
+
+  const confirmVisible = await isPensionPopupVisible(frame, '#lotto720_popup_confirm');
+  if (!confirmVisible) {
+    const state = await collectPensionOrderState(frame);
+    throw new Error([
+      'Pension confirm popup did not appear after doOrder().',
+      ...state,
+    ].join('\n'));
+  }
+
+  const orderDialog = waitForDialog(page, 30000);
+  await frame.evaluate(() => {
+    // @ts-ignore
+    doOrderRequest();
+  });
+  const orderOutcome = await Promise.race([
+    waitForPensionOrderOutcome(frame, 30000).then(() => null),
+    orderDialog,
+  ]);
+  if (orderOutcome) {
+    throw new Error(`Pension order alert after confirmation: ${orderOutcome}`);
+  }
+
+  const completed = await hasPensionOrderOutcome(frame);
+  if (!completed) {
+    const state = await collectPensionOrderState(frame);
+    throw new Error([
+      'Pension order did not produce a payment or completion popup.',
+      ...state,
+    ].join('\n'));
+  }
+  const receipt = await frame.evaluate(() => {
+    const popupOrderNo = (document.querySelector('#lotto720_popup_pay .orderNo') as HTMLElement | null)?.textContent?.trim() ?? '';
+    const hiddenOrderNo = (document.querySelector('#orderNo') as HTMLInputElement | null)?.value?.trim() ?? '';
+    return popupOrderNo || hiddenOrderNo;
+  }).catch(() => '');
+  return (receipt || 'pension-order-missing').trim();
+}
+
+async function waitForDialog(page: any, timeout: number): Promise<string | null> {
+  return page.waitForEvent('dialog', { timeout })
     .then(async (dialog: any) => {
       const message = dialog.message();
       await dialog.accept();
       return message;
     })
     .catch(() => null);
-  await frame.evaluate(() => {
-    // @ts-ignore
-    doOrder();
-  });
-  const dialogMessage = await dialogPromise;
-  try {
-    await frame.waitForFunction(() => {
-      const popup = document.querySelector('#lotto720_popup_confirm') as HTMLElement | null;
-      if (!popup) {
-        return false;
-      }
-      const style = window.getComputedStyle(popup);
-      return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
-    }, { timeout: 10000 });
-  } catch {
-    const state = await collectPensionOrderState(frame);
-    throw new Error([
-      'Pension confirm popup did not appear after doOrder().',
-      `dialog=${dialogMessage ?? 'none'}`,
-      ...state,
-    ].join('\n'));
-  }
-  await frame.evaluate(() => {
-    // @ts-ignore
-    doOrderRequest();
-  });
+}
+
+async function waitForVisiblePensionPopup(frame: any, selector: string, timeout: number): Promise<void> {
+  await frame.waitForFunction((popupSelector: string) => {
+    const popup = document.querySelector(popupSelector) as HTMLElement | null;
+    if (!popup) {
+      return false;
+    }
+    const style = window.getComputedStyle(popup);
+    return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+  }, selector, { timeout });
+}
+
+async function isPensionPopupVisible(frame: any, selector: string): Promise<boolean> {
+  return frame.evaluate((popupSelector: string) => {
+    const popup = document.querySelector(popupSelector) as HTMLElement | null;
+    if (!popup) {
+      return false;
+    }
+    const style = window.getComputedStyle(popup);
+    return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+  }, selector);
+}
+
+async function waitForPensionOrderOutcome(frame: any, timeout: number): Promise<void> {
   await frame.waitForFunction(() => {
     const isVisible = (selector: string) => {
       const popup = document.querySelector(selector) as HTMLElement | null;
@@ -317,14 +368,24 @@ async function finalizePensionPurchase(frame: any): Promise<string> {
       const style = window.getComputedStyle(popup);
       return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
     };
-    return isVisible('#lotto720_popup_pay') || isVisible('#lotto720_popup_compleate');
-  }, { timeout: 30000 });
-  const receipt = await frame.evaluate(() => {
-    const popupOrderNo = (document.querySelector('#lotto720_popup_pay .orderNo') as HTMLElement | null)?.textContent?.trim() ?? '';
-    const hiddenOrderNo = (document.querySelector('#orderNo') as HTMLInputElement | null)?.value?.trim() ?? '';
-    return popupOrderNo || hiddenOrderNo;
-  }).catch(() => '');
-  return (receipt || 'pension-order-missing').trim();
+    const orderNumber = (document.querySelector('#orderNo') as HTMLInputElement | null)?.value?.trim() ?? '';
+    return isVisible('#lotto720_popup_pay') || isVisible('#lotto720_popup_compleate') || orderNumber.length > 0;
+  }, { timeout });
+}
+
+async function hasPensionOrderOutcome(frame: any): Promise<boolean> {
+  return frame.evaluate(() => {
+    const isVisible = (selector: string) => {
+      const popup = document.querySelector(selector) as HTMLElement | null;
+      if (!popup) {
+        return false;
+      }
+      const style = window.getComputedStyle(popup);
+      return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+    };
+    const orderNumber = (document.querySelector('#orderNo') as HTMLInputElement | null)?.value?.trim() ?? '';
+    return isVisible('#lotto720_popup_pay') || isVisible('#lotto720_popup_compleate') || orderNumber.length > 0;
+  });
 }
 
 async function collectPensionOrderState(frame: any): Promise<string[]> {
