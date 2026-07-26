@@ -3,7 +3,7 @@ import { loadConfig } from '../config/schema.ts';
 import { getWeekContext } from '../core/draw-calendar.ts';
 import type { PurchaseRecord } from '../core/purchase-record.ts';
 import { DhlotteryHistoryProvider } from '../providers/dhlottery/history.ts';
-import { fetchLottoResult, fetchPensionResult, loadFixtureResults } from '../providers/results/fetcher.ts';
+import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError, loadFixtureResults } from '../providers/results/fetcher.ts';
 import { TelegramClient } from '../providers/telegram/client.ts';
 
 export interface SummarizeOptions {
@@ -16,20 +16,34 @@ function countLottoMatches(ticket: number[], winning: number[]): number {
   return ticket.filter((value) => winning.includes(value)).length;
 }
 
-function formatSummary(record: PurchaseRecord, lottoWinning: number[], pensionWinning: Array<{ group: number; number: string }>): string {
-  const lottoLines = record.lotto.tickets.map((ticket) => {
-    const matches = countLottoMatches(ticket, lottoWinning);
-    return `- ${ticket.join('-')} => ${matches} match(es)`;
-  });
-  const pensionLines = record.pension.tickets.map((ticket) => {
-    const matched = pensionWinning.some((winner) => winner.group === ticket.group && winner.number === ticket.number);
-    return `- ${ticket.group}조 ${ticket.number} => ${matched ? 'match' : 'no match'}`;
-  });
+function formatSummary(record: PurchaseRecord, input: {
+  lotto?: { numbers: number[] };
+  pension?: { winningNumbers: Array<{ group: number; number: string }> };
+  lottoPending: boolean;
+  pensionPending: boolean;
+}): string {
+  const lottoLines = !record.lotto.tickets.length
+    ? ['lotto=no ticket for this draw week']
+    : input.lotto
+      ? [
+          `lotto round=${record.lotto.drawRound} winning=${input.lotto.numbers.join('-')}`,
+          ...record.lotto.tickets.map((ticket) => `- ${ticket.join('-')} => ${countLottoMatches(ticket, input.lotto!.numbers)} match(es)`),
+        ]
+      : [`lotto round=${record.lotto.drawRound} result=${input.lottoPending ? 'not published yet' : 'unavailable'}`];
+  const pensionLines = !record.pension.tickets.length
+    ? ['pension=no ticket for this draw week']
+    : input.pension
+      ? [
+          `pension round=${record.pension.drawRound}`,
+          ...record.pension.tickets.map((ticket) => {
+            const matched = input.pension!.winningNumbers.some((winner) => winner.group === ticket.group && winner.number === ticket.number);
+            return `- ${ticket.group}조 ${ticket.number} => ${matched ? 'match' : 'no match'}`;
+          }),
+        ]
+      : [`pension round=${record.pension.drawRound} result=${input.pensionPending ? 'not published yet' : 'unavailable'}`];
   return [
     `week=${record.week}`,
-    `lotto round=${record.lotto.drawRound} winning=${lottoWinning.join('-')}`,
     ...lottoLines,
-    `pension round=${record.pension.drawRound}`,
     ...pensionLines,
   ].join('\n');
 }
@@ -80,29 +94,10 @@ export async function runSummarizeCommand(options: SummarizeOptions): Promise<st
     return message;
   }
 
-  let results;
-  try {
-    results = options.mode === 'live'
-      ? {
-          lotto: await fetchLottoResult(record.lotto.drawRound),
-          pension: await fetchPensionResult(record.pension.drawRound),
-        }
-      : await loadFixtureResults();
-  } catch (error) {
-    const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
-    const reason = error instanceof Error ? error.message : 'result fetch failed';
-    const message = `${prefix} weekly summary for ${record.week}\nfailed to load winning results.\nreason=${reason}`;
-    await mkdir('artifacts', { recursive: true });
-    if (purchaseSource === 'history') {
-      await writeFile('artifacts/purchase-record.history.json', `${JSON.stringify(record, null, 2)}\n`, 'utf8');
-    }
-    await writeFile('artifacts/weekly-summary.txt', `${message}\n`, 'utf8');
-    const telegram = new TelegramClient();
-    await telegram.send(message);
-    return message;
-  }
-
-  const summary = formatSummary(record, results.lotto.numbers, results.pension.winningNumbers);
+  const results = options.mode === 'live'
+    ? await loadLiveResults(record)
+    : await loadFixtureResults().then(({ lotto, pension }) => ({ lotto, pension, lottoPending: false, pensionPending: false }));
+  const summary = formatSummary(record, results);
   await mkdir('artifacts', { recursive: true });
   if (purchaseSource === 'history') {
     await writeFile('artifacts/purchase-record.history.json', `${JSON.stringify(record, null, 2)}\n`, 'utf8');
@@ -113,4 +108,36 @@ export async function runSummarizeCommand(options: SummarizeOptions): Promise<st
   const telegram = new TelegramClient();
   await telegram.send(`${prefix} weekly summary for ${record.week}\n${summary}`);
   return summary;
+}
+
+async function loadLiveResults(record: PurchaseRecord): Promise<{
+  lotto?: Awaited<ReturnType<typeof fetchLottoResult>>;
+  pension?: Awaited<ReturnType<typeof fetchPensionResult>>;
+  lottoPending: boolean;
+  pensionPending: boolean;
+}> {
+  const [lotto, pension] = await Promise.all([
+    loadResult(record.lotto.tickets.length > 0 ? () => fetchLottoResult(record.lotto.drawRound) : undefined),
+    loadResult(record.pension.tickets.length > 0 ? () => fetchPensionResult(record.pension.drawRound) : undefined),
+  ]);
+  return {
+    lotto: lotto.result,
+    pension: pension.result,
+    lottoPending: lotto.pending,
+    pensionPending: pension.pending,
+  };
+}
+
+async function loadResult<T>(fetchResult?: () => Promise<T>): Promise<{ result?: T; pending: boolean }> {
+  if (!fetchResult) {
+    return { pending: false };
+  }
+  try {
+    return { result: await fetchResult(), pending: false };
+  } catch (error) {
+    if (isResultNotPublishedError(error)) {
+      return { pending: true };
+    }
+    throw error;
+  }
 }

@@ -54,8 +54,8 @@ export function buildHistoryPurchaseRecord(
   config: AppConfig,
   input: {
     week: string;
-    lottoRound: number;
-    pensionRound: number;
+    lottoRound: number | null;
+    pensionRound: number | null;
     lottoTickets: LottoTicket[];
     pensionTickets: PensionTicket[];
   },
@@ -68,7 +68,7 @@ export function buildHistoryPurchaseRecord(
       mode: config.lotto.mode,
       tickets: input.lottoTickets,
       count: input.lottoTickets.length,
-      drawRound: input.lottoRound,
+      drawRound: input.lottoRound ?? 0,
       status: input.lottoTickets.length > 0 ? 'purchased' : 'skipped',
       receiptId: `history-lotto-${input.week}`,
     },
@@ -76,7 +76,7 @@ export function buildHistoryPurchaseRecord(
       mode: config.pension.mode,
       tickets: input.pensionTickets,
       count: input.pensionTickets.length,
-      drawRound: input.pensionRound,
+      drawRound: input.pensionRound ?? 0,
       status: input.pensionTickets.length > 0 ? 'purchased' : 'skipped',
       receiptId: `history-pension-${input.week}`,
     },
@@ -141,11 +141,11 @@ export class DhlotteryHistoryProvider {
 
     try {
       await login(page, input.username, input.password);
-      await openLedgerPage(page, input.weekStartDate, input.weekEndDate);
+      await openLedgerPage(page, shiftIsoDate(input.weekStartDate, -7), input.weekEndDate);
       const entries = await loadLedgerEntries(page);
-      const weekEntries = entries.filter((entry) => isWithinDateRange(entry.purchaseDate, input.weekStartDate, input.weekEndDate));
-      const lottoRound = resolveSingleRound(weekEntries, 'LO40', 'lotto');
-      const pensionRound = resolveSingleRound(weekEntries, 'LP72', 'pension');
+      const weekEntries = entries.filter((entry) => isWithinDateRange(entry.drawDate, input.weekStartDate, input.weekEndDate));
+      const lottoRound = resolveSingleRoundOrNull(weekEntries, 'LO40', 'lotto');
+      const pensionRound = resolveSingleRoundOrNull(weekEntries, 'LP72', 'pension');
       const lottoEntries = weekEntries.filter((entry) => entry.productCode === 'LO40' && entry.round === lottoRound);
       const pensionEntries = weekEntries.filter((entry) => entry.productCode === 'LP72' && entry.round === pensionRound);
 
@@ -154,7 +154,7 @@ export class DhlotteryHistoryProvider {
         .map((entry) => parsePensionTicketText(entry.numberText))
         .filter((ticket): ticket is PensionTicket => ticket !== null);
 
-      if (lottoTickets.length === 0 || pensionTickets.length === 0) {
+      if (lottoTickets.length === 0 && pensionTickets.length === 0) {
         throw new Error(`Incomplete purchase history found for ${input.week} (lottoCount=${lottoTickets.length}, pensionCount=${pensionTickets.length})`);
       }
 
@@ -169,8 +169,10 @@ export class DhlotteryHistoryProvider {
       await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
       await writeDiagnostics(diagnosticsPath, [
         `week=${input.week}`,
-        `searchStart=${input.weekStartDate}`,
+        `searchStart=${shiftIsoDate(input.weekStartDate, -7)}`,
         `searchEnd=${input.weekEndDate}`,
+        `drawWeekStart=${input.weekStartDate}`,
+        `drawWeekEnd=${input.weekEndDate}`,
         `lottoRound=${lottoRound}`,
         `pensionRound=${pensionRound}`,
         `lottoCount=${lottoTickets.length}`,
@@ -254,16 +256,23 @@ function currentKstDate(): string {
 }
 
 function isWithinDateRange(value: string, startDate: string, endDate: string): boolean {
-  return value >= startDate && value <= endDate;
+  const date = value.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
+  return date >= startDate && date <= endDate;
 }
 
-function resolveSingleRound(entries: LedgerEntry[], productCode: string, label: string): number {
+function shiftIsoDate(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function resolveSingleRoundOrNull(entries: LedgerEntry[], productCode: string, label: string): number | null {
   const rounds = [...new Set(entries
     .filter((entry) => entry.productCode === productCode)
     .map((entry) => entry.round)
     .filter((round) => Number.isInteger(round) && round > 0))];
   if (rounds.length === 0) {
-    throw new Error(`No ${label} purchase history found in the selected week`);
+    return null;
   }
   if (rounds.length > 1) {
     throw new Error(`Multiple ${label} rounds found in the selected week: ${rounds.join(', ')}`);
