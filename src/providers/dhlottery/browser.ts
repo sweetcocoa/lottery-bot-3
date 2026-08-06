@@ -258,7 +258,7 @@ async function waitForLottoOrderOutcome(frame: any, timeout: number): Promise<vo
         return false;
       }
       const style = window.getComputedStyle(element);
-      return style.display !== 'none' && style.visibility !== 'hidden' && element.offsetParent !== null;
+      return style.display !== 'none' && style.visibility !== 'hidden' && element.getClientRects().length > 0;
     };
     return isVisible('#report') || isVisible('#popupLayerAlert');
   }, { timeout });
@@ -271,7 +271,7 @@ async function readVisibleLottoFailureMessage(frame: any): Promise<string | null
       return null;
     }
     const style = window.getComputedStyle(popup);
-    if (style.display === 'none' || style.visibility === 'hidden' || popup.offsetParent === null) {
+    if (style.display === 'none' || style.visibility === 'hidden' || popup.getClientRects().length === 0) {
       return null;
     }
     const message = popup.querySelector('.layer-message')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
@@ -394,7 +394,7 @@ async function waitForVisiblePensionPopup(frame: any, selector: string, timeout:
       return false;
     }
     const style = window.getComputedStyle(popup);
-    return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+    return style.display !== 'none' && style.visibility !== 'hidden' && popup.getClientRects().length > 0;
   }, selector, { timeout });
 }
 
@@ -405,7 +405,7 @@ async function isPensionPopupVisible(frame: any, selector: string): Promise<bool
       return false;
     }
     const style = window.getComputedStyle(popup);
-    return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+    return style.display !== 'none' && style.visibility !== 'hidden' && popup.getClientRects().length > 0;
   }, selector);
 }
 
@@ -417,7 +417,7 @@ async function waitForPensionOrderOutcome(frame: any, timeout: number): Promise<
         return false;
       }
       const style = window.getComputedStyle(popup);
-      return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+      return style.display !== 'none' && style.visibility !== 'hidden' && popup.getClientRects().length > 0;
     };
     const orderNumber = (document.querySelector('#orderNo') as HTMLInputElement | null)?.value?.trim() ?? '';
     return isVisible('#lotto720_popup_pay') || isVisible('#lotto720_popup_compleate') || orderNumber.length > 0;
@@ -432,7 +432,7 @@ async function hasPensionOrderOutcome(frame: any): Promise<boolean> {
         return false;
       }
       const style = window.getComputedStyle(popup);
-      return style.display !== 'none' && style.visibility !== 'hidden' && popup.offsetParent !== null;
+      return style.display !== 'none' && style.visibility !== 'hidden' && popup.getClientRects().length > 0;
     };
     const orderNumber = (document.querySelector('#orderNo') as HTMLInputElement | null)?.value?.trim() ?? '';
     return isVisible('#lotto720_popup_pay') || isVisible('#lotto720_popup_compleate') || orderNumber.length > 0;
@@ -510,7 +510,7 @@ async function verifyPensionTicket(frame: any, expectedTicket: PensionTicket): P
         return {
           buyNo: valueOf('#frm input[name="BUY_NO"]'),
           buyCnt: valueOf('#frm input[name="BUY_CNT"]'),
-          recommendVisible: !!recommendPopup && window.getComputedStyle(recommendPopup).display !== 'none' && recommendPopup.offsetParent !== null,
+          recommendVisible: !!recommendPopup && window.getComputedStyle(recommendPopup).display !== 'none' && recommendPopup.getClientRects().length > 0,
           recommendItems,
         };
       });
