@@ -1,4 +1,5 @@
 import { TelegramClient } from '../providers/telegram/client.ts';
+import { readBuyFailureReason } from './buy-failure-reason.ts';
 
 async function main(): Promise<void> {
   const repository = process.env.GITHUB_REPOSITORY;
@@ -6,12 +7,17 @@ async function main(): Promise<void> {
   const mode = process.env.BUY_MODE ?? 'live';
   const product = process.env.BUY_PRODUCT ?? 'all';
   const telegram = new TelegramClient();
+  const failureReason = await readBuyFailureReason();
 
   const lines = [
     '[LIVE] buy failed',
     `mode=${mode}`,
     `product=${product}`,
   ];
+
+  if (failureReason) {
+    lines.push(`reason=${failureReason}`);
+  }
 
   if (repository && runId) {
     lines.push(`run=https://github.com/${repository}/actions/runs/${runId}`);

@@ -240,10 +240,43 @@ async function purchaseLottoTickets(frame: any, tickets: LottoTicket[]): Promise
 async function finalizeLottoPurchase(frame: any): Promise<string> {
   await frame.locator('#btnBuy').click();
   await frame.locator('#popupLayerConfirm input[value="확인"]').click();
-  await frame.waitForSelector('#report', { state: 'visible', timeout: 30000 });
+  await waitForLottoOrderOutcome(frame, 30000);
+  const failureMessage = await readVisibleLottoFailureMessage(frame);
+  if (failureMessage) {
+    throw new Error(`Lotto order failed: ${failureMessage}`);
+  }
   const receipt = await frame.locator('#barCode1').textContent();
   await frame.locator('#closeLayer').click();
   return (receipt || 'lotto-receipt-missing').trim();
+}
+
+async function waitForLottoOrderOutcome(frame: any, timeout: number): Promise<void> {
+  await frame.waitForFunction(() => {
+    const isVisible = (selector: string) => {
+      const element = document.querySelector(selector) as HTMLElement | null;
+      if (!element) {
+        return false;
+      }
+      const style = window.getComputedStyle(element);
+      return style.display !== 'none' && style.visibility !== 'hidden' && element.offsetParent !== null;
+    };
+    return isVisible('#report') || isVisible('#popupLayerAlert');
+  }, { timeout });
+}
+
+async function readVisibleLottoFailureMessage(frame: any): Promise<string | null> {
+  return frame.evaluate(() => {
+    const popup = document.querySelector('#popupLayerAlert') as HTMLElement | null;
+    if (!popup) {
+      return null;
+    }
+    const style = window.getComputedStyle(popup);
+    if (style.display === 'none' || style.visibility === 'hidden' || popup.offsetParent === null) {
+      return null;
+    }
+    const message = popup.querySelector('.layer-message')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+    return message || 'The lottery site reported an unspecified purchase error.';
+  });
 }
 
 async function purchasePensionTickets(frame: any, tickets: PensionTicket[]): Promise<PensionTicket[]> {
