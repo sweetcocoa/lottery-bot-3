@@ -281,10 +281,10 @@ function resolveSingleRoundOrNull(entries: LedgerEntry[], productCode: string, l
 }
 
 async function openLedgerPage(page: any, startDate: string, endDate: string): Promise<void> {
-  await gotoWithRetries(page, LEDGER_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await gotoWithRetries(page, LEDGER_URL, { waitUntil: 'commit', timeout: 30000 });
   await page.waitForFunction(
     () => typeof (window as any).MyLotteryledgerM?.fn_selectMyLotteryledger === 'function',
-    { timeout: 15000 },
+    { timeout: 30000 },
   );
   await page.evaluate(({ startDate, endDate }) => {
     const startInput = document.querySelector('#srchStrDt') as HTMLInputElement | null;

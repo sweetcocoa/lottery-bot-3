@@ -72,12 +72,12 @@ function isMissingBundledBrowserError(error: unknown): boolean {
 }
 
 export async function login(page: any, username: string, password: string): Promise<void> {
-  await gotoWithRetries(page, LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await gotoWithRetries(page, LOGIN_URL, { waitUntil: 'commit', timeout: 30000 });
   await page.waitForFunction(
     () => typeof (window as any).login === 'function'
       && typeof (window as any).fnRSAencrypt === 'function'
       && !!(window as any).rsa?.n,
-    { timeout: 15000 },
+    { timeout: 30000 },
   );
   await page.evaluate(({ username, password }) => {
     const idInput = document.getElementById('inpUserId') as HTMLInputElement | null;
