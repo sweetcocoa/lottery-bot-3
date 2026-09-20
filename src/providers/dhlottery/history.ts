@@ -6,8 +6,8 @@ import { createBrowserSession, login } from './session.ts';
 import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError } from '../results/fetcher.ts';
 
 const LEDGER_URL = 'https://www.dhlottery.co.kr/mypage/mylotteryledger';
-const LEDGER_LOAD_ATTEMPTS = 3;
 const LEDGER_READY_TIMEOUT = 15000;
+const HISTORY_SESSION_ATTEMPTS = 3;
 
 interface HistoryInput {
   username: string;
@@ -136,66 +136,77 @@ export class DhlotteryHistoryProvider {
   }
 
   async loadWeeklyPurchaseRecord(input: HistoryInput): Promise<PurchaseRecord> {
-    const { browser, page } = await createBrowserSession();
     await mkdir('artifacts/diagnostics', { recursive: true });
     const diagnosticsPath = `artifacts/diagnostics/history-${input.week}.txt`;
     const screenshotPath = `artifacts/diagnostics/history-${input.week}.png`;
 
-    try {
-      await login(page, input.username, input.password);
-      await openLedgerPage(page, shiftIsoDate(input.weekStartDate, -7), input.weekEndDate);
-      const entries = await loadLedgerEntries(page);
-      const weekEntries = entries.filter((entry) => isWithinDateRange(entry.drawDate, input.weekStartDate, input.weekEndDate));
-      const lottoRound = resolveSingleRoundOrNull(weekEntries, 'LO40', 'lotto');
-      const pensionRound = resolveSingleRoundOrNull(weekEntries, 'LP72', 'pension');
-      const lottoEntries = weekEntries.filter((entry) => entry.productCode === 'LO40' && entry.round === lottoRound);
-      const pensionEntries = weekEntries.filter((entry) => entry.productCode === 'LP72' && entry.round === pensionRound);
+    for (let attempt = 1; attempt <= HISTORY_SESSION_ATTEMPTS; attempt += 1) {
+      const { browser, page } = await createBrowserSession();
+      try {
+        await login(page, input.username, input.password);
+        await openLedgerPage(page, shiftIsoDate(input.weekStartDate, -7), input.weekEndDate);
+        const entries = await loadLedgerEntries(page);
+        const weekEntries = entries.filter((entry) => isWithinDateRange(entry.drawDate, input.weekStartDate, input.weekEndDate));
+        const lottoRound = resolveSingleRoundOrNull(weekEntries, 'LO40', 'lotto');
+        const pensionRound = resolveSingleRoundOrNull(weekEntries, 'LP72', 'pension');
+        const lottoEntries = weekEntries.filter((entry) => entry.productCode === 'LO40' && entry.round === lottoRound);
+        const pensionEntries = weekEntries.filter((entry) => entry.productCode === 'LP72' && entry.round === pensionRound);
 
-      const lottoTickets = await extractLottoTickets(page, lottoEntries);
-      const pensionTickets = pensionEntries
-        .map((entry) => parsePensionTicketText(entry.numberText))
-        .filter((ticket): ticket is PensionTicket => ticket !== null);
+        const lottoTickets = await extractLottoTickets(page, lottoEntries);
+        const pensionTickets = pensionEntries
+          .map((entry) => parsePensionTicketText(entry.numberText))
+          .filter((ticket): ticket is PensionTicket => ticket !== null);
 
-      if (lottoTickets.length === 0 && pensionTickets.length === 0) {
-        throw new Error(`Incomplete purchase history found for ${input.week} (lottoCount=${lottoTickets.length}, pensionCount=${pensionTickets.length})`);
+        if (lottoTickets.length === 0 && pensionTickets.length === 0) {
+          throw new Error(`Incomplete purchase history found for ${input.week} (lottoCount=${lottoTickets.length}, pensionCount=${pensionTickets.length})`);
+        }
+
+        const record = buildHistoryPurchaseRecord(input.config, {
+          week: input.week,
+          lottoRound,
+          pensionRound,
+          lottoTickets,
+          pensionTickets,
+        });
+
+        await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
+        await writeDiagnostics(diagnosticsPath, [
+          `week=${input.week}`,
+          `sessionAttempt=${attempt}`,
+          `searchStart=${shiftIsoDate(input.weekStartDate, -7)}`,
+          `searchEnd=${input.weekEndDate}`,
+          `drawWeekStart=${input.weekStartDate}`,
+          `drawWeekEnd=${input.weekEndDate}`,
+          `lottoRound=${lottoRound}`,
+          `pensionRound=${pensionRound}`,
+          `lottoCount=${lottoTickets.length}`,
+          `pensionCount=${pensionTickets.length}`,
+        ]);
+        return record;
+      } catch (error) {
+        if (attempt === HISTORY_SESSION_ATTEMPTS) {
+          await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
+          const title = await page.title().catch(() => '');
+          const reason = error instanceof Error ? error.message : String(error);
+          await writeDiagnostics(diagnosticsPath, [
+            `week=${input.week}`,
+            `sessionAttempts=${HISTORY_SESSION_ATTEMPTS}`,
+            `searchStart=${input.weekStartDate}`,
+            `searchEnd=${input.weekEndDate}`,
+            `currentUrl=${page.url()}`,
+            `title=${title}`,
+            `error=${reason}`,
+          ]);
+          throw new Error(`Purchase history could not be loaded after ${HISTORY_SESSION_ATTEMPTS} fresh browser sessions: ${reason}`);
+        }
+      } finally {
+        await browser.close();
       }
 
-      const record = buildHistoryPurchaseRecord(input.config, {
-        week: input.week,
-        lottoRound,
-        pensionRound,
-        lottoTickets,
-        pensionTickets,
-      });
-
-      await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
-      await writeDiagnostics(diagnosticsPath, [
-        `week=${input.week}`,
-        `searchStart=${shiftIsoDate(input.weekStartDate, -7)}`,
-        `searchEnd=${input.weekEndDate}`,
-        `drawWeekStart=${input.weekStartDate}`,
-        `drawWeekEnd=${input.weekEndDate}`,
-        `lottoRound=${lottoRound}`,
-        `pensionRound=${pensionRound}`,
-        `lottoCount=${lottoTickets.length}`,
-        `pensionCount=${pensionTickets.length}`,
-      ]);
-      return record;
-    } catch (error) {
-      await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
-      const title = await page.title().catch(() => '');
-      await writeDiagnostics(diagnosticsPath, [
-        `week=${input.week}`,
-        `searchStart=${input.weekStartDate}`,
-        `searchEnd=${input.weekEndDate}`,
-        `currentUrl=${page.url()}`,
-        `title=${title}`,
-        `error=${error instanceof Error ? error.message : String(error)}`,
-      ]);
-      throw error;
-    } finally {
-      await browser.close();
+      await delay(attempt * 1000);
     }
+
+    throw new Error('Purchase history could not be loaded.');
   }
 }
 
@@ -283,42 +294,33 @@ function resolveSingleRoundOrNull(entries: LedgerEntry[], productCode: string, l
 }
 
 async function openLedgerPage(page: any, startDate: string, endDate: string): Promise<void> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= LEDGER_LOAD_ATTEMPTS; attempt += 1) {
-    try {
-      await page.goto(LEDGER_URL, { waitUntil: 'commit', timeout: LEDGER_READY_TIMEOUT });
-      await page.waitForFunction(
-        () => typeof (window as any).MyLotteryledgerM?.fn_selectMyLotteryledger === 'function',
-        { timeout: LEDGER_READY_TIMEOUT },
-      );
-      await page.evaluate(({ startDate, endDate }) => {
-        const startInput = document.querySelector('#srchStrDt') as HTMLInputElement | null;
-        const endInput = document.querySelector('#srchEndDt') as HTMLInputElement | null;
-        const goodsSelect = document.querySelector('#ltGdsSelect') as HTMLSelectElement | null;
-        if (!startInput || !endInput || !goodsSelect) {
-          throw new Error('Purchase history search controls are missing');
-        }
-        startInput.value = startDate;
-        endInput.value = endDate;
-        goodsSelect.value = '';
-        // @ts-ignore
-        MyLotteryledgerM.fn_selectMyLotteryledger(1);
-      }, { startDate, endDate });
-      await page.waitForTimeout(2000);
-      await page.waitForFunction(
-        () => Array.isArray((window as any).MyLotteryledgerM?.list),
-        { timeout: LEDGER_READY_TIMEOUT },
-      );
-      return;
-    } catch (error) {
-      lastError = error;
-      if (attempt < LEDGER_LOAD_ATTEMPTS) {
-        await page.waitForTimeout(attempt * 1000);
-      }
+  await page.goto(LEDGER_URL, { waitUntil: 'commit', timeout: LEDGER_READY_TIMEOUT });
+  await page.waitForFunction(
+    () => typeof (window as any).MyLotteryledgerM?.fn_selectMyLotteryledger === 'function',
+    { timeout: LEDGER_READY_TIMEOUT },
+  );
+  await page.evaluate(({ startDate, endDate }) => {
+    const startInput = document.querySelector('#srchStrDt') as HTMLInputElement | null;
+    const endInput = document.querySelector('#srchEndDt') as HTMLInputElement | null;
+    const goodsSelect = document.querySelector('#ltGdsSelect') as HTMLSelectElement | null;
+    if (!startInput || !endInput || !goodsSelect) {
+      throw new Error('Purchase history search controls are missing');
     }
-  }
-  const reason = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`Purchase history page was not ready after ${LEDGER_LOAD_ATTEMPTS} attempts: ${reason}`);
+    startInput.value = startDate;
+    endInput.value = endDate;
+    goodsSelect.value = '';
+    // @ts-ignore
+    MyLotteryledgerM.fn_selectMyLotteryledger(1);
+  }, { startDate, endDate });
+  await page.waitForTimeout(2000);
+  await page.waitForFunction(
+    () => Array.isArray((window as any).MyLotteryledgerM?.list),
+    { timeout: LEDGER_READY_TIMEOUT },
+  );
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function loadLedgerEntries(page: any): Promise<LedgerEntry[]> {
