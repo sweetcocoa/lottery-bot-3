@@ -2,10 +2,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import type { AppConfig } from '../../config/schema.ts';
 import type { PurchaseRecord } from '../../core/purchase-record.ts';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
-import { createBrowserSession, gotoWithRetries, login } from './session.ts';
+import { createBrowserSession, login } from './session.ts';
 import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError } from '../results/fetcher.ts';
 
 const LEDGER_URL = 'https://www.dhlottery.co.kr/mypage/mylotteryledger';
+const LEDGER_LOAD_ATTEMPTS = 3;
+const LEDGER_READY_TIMEOUT = 15000;
 
 interface HistoryInput {
   username: string;
@@ -281,29 +283,42 @@ function resolveSingleRoundOrNull(entries: LedgerEntry[], productCode: string, l
 }
 
 async function openLedgerPage(page: any, startDate: string, endDate: string): Promise<void> {
-  await gotoWithRetries(page, LEDGER_URL, { waitUntil: 'commit', timeout: 30000 });
-  await page.waitForFunction(
-    () => typeof (window as any).MyLotteryledgerM?.fn_selectMyLotteryledger === 'function',
-    { timeout: 30000 },
-  );
-  await page.evaluate(({ startDate, endDate }) => {
-    const startInput = document.querySelector('#srchStrDt') as HTMLInputElement | null;
-    const endInput = document.querySelector('#srchEndDt') as HTMLInputElement | null;
-    const goodsSelect = document.querySelector('#ltGdsSelect') as HTMLSelectElement | null;
-    if (!startInput || !endInput || !goodsSelect) {
-      throw new Error('Purchase history search controls are missing');
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= LEDGER_LOAD_ATTEMPTS; attempt += 1) {
+    try {
+      await page.goto(LEDGER_URL, { waitUntil: 'commit', timeout: LEDGER_READY_TIMEOUT });
+      await page.waitForFunction(
+        () => typeof (window as any).MyLotteryledgerM?.fn_selectMyLotteryledger === 'function',
+        { timeout: LEDGER_READY_TIMEOUT },
+      );
+      await page.evaluate(({ startDate, endDate }) => {
+        const startInput = document.querySelector('#srchStrDt') as HTMLInputElement | null;
+        const endInput = document.querySelector('#srchEndDt') as HTMLInputElement | null;
+        const goodsSelect = document.querySelector('#ltGdsSelect') as HTMLSelectElement | null;
+        if (!startInput || !endInput || !goodsSelect) {
+          throw new Error('Purchase history search controls are missing');
+        }
+        startInput.value = startDate;
+        endInput.value = endDate;
+        goodsSelect.value = '';
+        // @ts-ignore
+        MyLotteryledgerM.fn_selectMyLotteryledger(1);
+      }, { startDate, endDate });
+      await page.waitForTimeout(2000);
+      await page.waitForFunction(
+        () => Array.isArray((window as any).MyLotteryledgerM?.list),
+        { timeout: LEDGER_READY_TIMEOUT },
+      );
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < LEDGER_LOAD_ATTEMPTS) {
+        await page.waitForTimeout(attempt * 1000);
+      }
     }
-    startInput.value = startDate;
-    endInput.value = endDate;
-    goodsSelect.value = '';
-    // @ts-ignore
-    MyLotteryledgerM.fn_selectMyLotteryledger(1);
-  }, { startDate, endDate });
-  await page.waitForTimeout(2000);
-  await page.waitForFunction(
-    () => Array.isArray((window as any).MyLotteryledgerM?.list),
-    { timeout: 15000 },
-  );
+  }
+  const reason = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`Purchase history page was not ready after ${LEDGER_LOAD_ATTEMPTS} attempts: ${reason}`);
 }
 
 async function loadLedgerEntries(page: any): Promise<LedgerEntry[]> {
