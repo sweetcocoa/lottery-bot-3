@@ -53,9 +53,12 @@ jobs:
           node --experimental-strip-types src/cli.ts summarize \
             --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }}
 
-      - name: Diagnose authenticated purchase history without purchase or notifications
+      - name: Diagnose full result flow without purchase or notifications
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnose' }}
-        run: node --experimental-strip-types src/scripts/diagnose-history.ts
+        env:
+          TELEGRAM_BOT_TOKEN: ''
+          TELEGRAM_CHAT_ID: ''
+        run: node --experimental-strip-types src/scripts/diagnose-results.ts
 
       - name: Upload summary artifact
         if: ${{ always() && env.ACT != 'true' && (github.event_name == 'schedule' || inputs.mode != 'diagnose') }}
