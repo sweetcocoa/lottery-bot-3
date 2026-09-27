@@ -154,10 +154,15 @@ export class DhlotteryHistoryProvider {
         const pensionEntries = weekEntries.filter((entry) => entry.productCode === 'LP72' && entry.round === pensionRound);
 
         const lottoTickets = await extractLottoTickets(page, lottoEntries);
-        const pensionTickets = pensionEntries
-          .map((entry) => parsePensionTicketText(entry.numberText))
-          .filter((ticket): ticket is PensionTicket => ticket !== null);
+        const pensionTickets = pensionEntries.map((entry) => {
+          const ticket = parsePensionTicketText(entry.numberText);
+          if (!ticket) throw new Error(`Could not parse pension ticket for round ${entry.round}`);
+          return ticket;
+        });
 
+        if (lottoEntries.length > 0 && lottoTickets.length === 0) {
+          throw new Error(`Could not extract lotto tickets for round ${lottoRound}`);
+        }
         if (lottoTickets.length === 0 && pensionTickets.length === 0) {
           throw new Error(`Incomplete purchase history found for ${input.week} (lottoCount=${lottoTickets.length}, pensionCount=${pensionTickets.length})`);
         }
@@ -295,9 +300,10 @@ function resolveSingleRoundOrNull(entries: LedgerEntry[], productCode: string, l
 }
 
 async function openLedgerPage(page: any, startDate: string, endDate: string): Promise<void> {
-  await page.goto(LEDGER_URL, { waitUntil: 'commit', timeout: LEDGER_READY_TIMEOUT });
+  await page.goto(LEDGER_URL, { waitUntil: 'domcontentloaded', timeout: LEDGER_READY_TIMEOUT });
   await page.waitForFunction(
     () => typeof (window as any).MyLotteryledgerM?.fn_selectMyLotteryledger === 'function',
+    null,
     { timeout: LEDGER_READY_TIMEOUT },
   );
   await page.evaluate(({ startDate, endDate }) => {
@@ -310,12 +316,15 @@ async function openLedgerPage(page: any, startDate: string, endDate: string): Pr
     startInput.value = startDate;
     endInput.value = endDate;
     goodsSelect.value = '';
+    // The search callback assigns a fresh list; clear the page's initial list so this wait observes that callback.
+    // @ts-ignore
+    MyLotteryledgerM.list = null;
     // @ts-ignore
     MyLotteryledgerM.fn_selectMyLotteryledger(1);
   }, { startDate, endDate });
-  await page.waitForTimeout(2000);
   await page.waitForFunction(
     () => Array.isArray((window as any).MyLotteryledgerM?.list),
+    null,
     { timeout: LEDGER_READY_TIMEOUT },
   );
 }
@@ -379,7 +388,7 @@ async function extractLottoTickets(page: any, entries: LedgerEntry[]): Promise<L
   const allTickets: LottoTicket[] = [];
   for (const entry of entries) {
     if (entry.index < 0) {
-      continue;
+      throw new Error(`Lotto ticket detail control is missing for round ${entry.round}`);
     }
     const trigger = page.locator(`.whl-body .barcd[data-index="${entry.index}"]`).first();
     await trigger.waitFor({ state: 'visible', timeout: 10000 });
@@ -388,6 +397,7 @@ async function extractLottoTickets(page: any, entries: LedgerEntry[]): Promise<L
     await popup.waitFor({ state: 'visible', timeout: 15000 });
     await page.waitForFunction(
       () => document.querySelectorAll('#Lotto645TicketP .ticket-num-line .ticket-num-wrap').length > 0,
+      null,
       { timeout: 15000 },
     );
     const tickets = await page.evaluate(() => {
