@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { loadConfig } from '../config/schema.ts';
 import { getWeekContext } from '../core/draw-calendar.ts';
 import type { PurchaseRecord } from '../core/purchase-record.ts';
+import { loadPurchaseSnapshot } from '../core/purchase-snapshot.ts';
 import { DhlotteryHistoryProvider } from '../providers/dhlottery/history.ts';
 import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError, loadFixtureResults } from '../providers/results/fetcher.ts';
 import { TelegramClient } from '../providers/telegram/client.ts';
@@ -53,56 +54,80 @@ async function loadRecord(options: {
   purchaseSource: 'history' | 'local-fixture';
   config: Awaited<ReturnType<typeof loadConfig>>;
   week: ReturnType<typeof getWeekContext>;
-}): Promise<PurchaseRecord> {
+}): Promise<{ record: PurchaseRecord; source: 'fixture' | 'history' | 'snapshot' }> {
   if (options.purchaseSource === 'local-fixture') {
     const raw = await readFile('src/testing/fixtures/purchase-record.fixture.json', 'utf8');
-    return JSON.parse(raw) as PurchaseRecord;
+    return { record: JSON.parse(raw) as PurchaseRecord, source: 'fixture' };
   }
 
   const username = process.env.DHLOTTERY_USERNAME;
   const password = process.env.DHLOTTERY_PASSWORD;
-  if (!username || !password) {
-    throw new Error('DHLOTTERY_USERNAME and DHLOTTERY_PASSWORD are required to load purchase history from dhlottery.co.kr');
-  }
+  return loadRecordWithFallback(
+    () => {
+      if (!username || !password) {
+        throw new Error('DHLOTTERY_USERNAME and DHLOTTERY_PASSWORD are required to load purchase history from dhlottery.co.kr');
+      }
+      return new DhlotteryHistoryProvider().loadWeeklyPurchaseRecord({
+        username,
+        password,
+        week: options.week.week,
+        weekStartDate: options.week.weekStartDate,
+        weekEndDate: options.week.weekEndDate,
+        config: options.config,
+      });
+    },
+    () => loadPurchaseSnapshot(options.week.week),
+  );
+}
 
-  const provider = new DhlotteryHistoryProvider();
-  return provider.loadWeeklyPurchaseRecord({
-    username,
-    password,
-    week: options.week.week,
-    weekStartDate: options.week.weekStartDate,
-    weekEndDate: options.week.weekEndDate,
-    config: options.config,
-  });
+export async function loadRecordWithFallback(
+  loadHistory: () => Promise<PurchaseRecord>,
+  loadSnapshot: () => Promise<PurchaseRecord>,
+): Promise<{ record: PurchaseRecord; source: 'history' | 'snapshot' }> {
+  try {
+    return { record: await loadHistory(), source: 'history' };
+  } catch (historyError) {
+    try {
+      return { record: await loadSnapshot(), source: 'snapshot' };
+    } catch (snapshotError) {
+      const historyReason = historyError instanceof Error ? historyError.message : String(historyError);
+      const snapshotReason = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
+      throw new Error(`History unavailable: ${historyReason}; confirmed purchase snapshot unavailable: ${snapshotReason}`);
+    }
+  }
 }
 
 export async function runSummarizeCommand(options: SummarizeOptions): Promise<string> {
   const config = await loadConfig();
   const week = getWeekContext(new Date(), options.targetWeek);
   const purchaseSource = options.purchaseSource ?? (options.mode === 'live' ? 'history' : 'local-fixture');
+  let summary: string;
   let record: PurchaseRecord;
   try {
-    record = await loadRecord({ mode: options.mode, purchaseSource, config, week });
+    const loaded = await loadRecord({ mode: options.mode, purchaseSource, config, week });
+    record = loaded.record;
+    const results = options.mode === 'live'
+      ? await loadLiveResults(record)
+      : await loadFixtureResults().then(({ lotto, pension }) => ({ lotto, pension, lottoPending: false, pensionPending: false }));
+    const sourceNote = loaded.source === 'snapshot' ? '\nsource=confirmed automatic purchase snapshot; manual purchases may be absent' : '';
+    summary = `${formatSummary(record, results)}${sourceNote}`;
+    await mkdir('artifacts', { recursive: true });
+    if (loaded.source === 'history') {
+      await writeFile('artifacts/purchase-record.history.json', `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+    }
+    await writeFile('artifacts/weekly-summary.txt', `${summary}\n`, 'utf8');
   } catch (error) {
     const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
-    const reason = error instanceof Error ? error.message : 'purchase history could not be loaded';
-    const message = `${prefix} weekly summary for ${week.week}\nno purchase record found for this run.\nreason=${reason}`;
+    const reason = error instanceof Error ? error.message : String(error);
+    const message = `${prefix} weekly summary failed for ${week.week}\nreason=${reason}`;
     await mkdir('artifacts', { recursive: true });
     await writeFile('artifacts/weekly-summary.txt', `${message}\n`, 'utf8');
     const telegram = new TelegramClient();
-    await telegram.send(message);
-    return message;
+    await telegram.send(message).catch((alertError) => {
+      console.error(`Could not send weekly summary failure alert: ${alertError}`);
+    });
+    throw error;
   }
-
-  const results = options.mode === 'live'
-    ? await loadLiveResults(record)
-    : await loadFixtureResults().then(({ lotto, pension }) => ({ lotto, pension, lottoPending: false, pensionPending: false }));
-  const summary = formatSummary(record, results);
-  await mkdir('artifacts', { recursive: true });
-  if (purchaseSource === 'history') {
-    await writeFile('artifacts/purchase-record.history.json', `${JSON.stringify(record, null, 2)}\n`, 'utf8');
-  }
-  await writeFile('artifacts/weekly-summary.txt', `${summary}\n`, 'utf8');
 
   const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
   const telegram = new TelegramClient();

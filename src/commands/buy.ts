@@ -131,9 +131,7 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
     pensionRound: week.pensionRound,
   });
 
-  if (options.mode !== 'live') {
-    await savePurchaseRecord(record);
-  }
+  await savePurchaseRecord(record);
   const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
   await telegram.send([
     `${prefix} buy completed for ${week.week}`,

@@ -18,8 +18,10 @@ jobs:
   results:
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
     env:
+      GH_TOKEN: ${{ github.token }}
       DHLOTTERY_USERNAME: ${{ secrets.DHLOTTERY_USERNAME }}
       DHLOTTERY_PASSWORD: ${{ secrets.DHLOTTERY_PASSWORD }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -45,6 +47,10 @@ jobs:
 
       - name: Ensure artifacts dir
         run: mkdir -p artifacts
+
+      - name: Download confirmed purchase snapshot
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
+        run: node --experimental-strip-types src/scripts/download-purchase-snapshot.ts
 
       - name: Run summarize command
         run: |

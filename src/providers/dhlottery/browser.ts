@@ -84,7 +84,7 @@ export class BrowserDhlotteryProvider {
 async function runBrowserFlow(
   mode: 'smoke' | 'purchase',
   input: BrowserInput,
-  action: (session: { page: any }) => Promise<{ details: string[]; receiptId?: string }>,
+  action: (session: { page: any }) => Promise<{ details: string[]; receiptId?: string; actualPensionTickets?: PensionTicket[] }>,
 ): Promise<BrowserArtifacts> {
   const { browser, context, page } = await createBrowserSession();
   await mkdir('artifacts/diagnostics', { recursive: true });
@@ -98,6 +98,7 @@ async function runBrowserFlow(
     return {
       diagnosticsPath,
       receiptId: result.receiptId,
+      actualPensionTickets: result.actualPensionTickets,
     };
   } catch (error) {
     const details = await captureOpenPageArtifacts(context, `artifacts/diagnostics/browser-${mode}-${input.week}`);
