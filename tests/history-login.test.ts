@@ -29,8 +29,9 @@ test('history login establishes and verifies an authenticated session without re
       });
       return response(200, 'MyLotteryledgerM');
     },
-    post: async (url: string, options: { form: Record<string, string> }) => {
+    post: async (url: string, options: { form: Record<string, string>; headers: Record<string, string> }) => {
       seen.push(url);
+      assert.equal(options.headers.referer, 'https://www.dhlottery.co.kr/login');
       assert.equal(options.form.inpUserId, 'test-user');
       const decrypt = (value: string) => privateDecrypt({ key: privateKey, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(value, 'hex')).toString();
       assert.equal(decrypt(options.form.userId), 'test-user');

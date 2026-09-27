@@ -39,6 +39,10 @@ export async function loginForHistory(request: any, username: string, password: 
       inpUserId: username,
     },
     maxRedirects: 0,
+    headers: {
+      origin: BASE_URL,
+      referer: `${BASE_URL}/login`,
+    },
     timeout: REQUEST_TIMEOUT_MS,
   });
   const location = loginResponse.headers().location ?? '';
