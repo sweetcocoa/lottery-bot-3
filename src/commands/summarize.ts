@@ -2,7 +2,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { loadConfig } from '../config/schema.ts';
 import { getWeekContext } from '../core/draw-calendar.ts';
 import type { PurchaseRecord } from '../core/purchase-record.ts';
-import { loadPurchaseSnapshot } from '../core/purchase-snapshot.ts';
 import { DhlotteryHistoryProvider } from '../providers/dhlottery/history.ts';
 import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError, loadFixtureResults } from '../providers/results/fetcher.ts';
 import { TelegramClient } from '../providers/telegram/client.ts';
@@ -54,47 +53,25 @@ async function loadRecord(options: {
   purchaseSource: 'history' | 'local-fixture';
   config: Awaited<ReturnType<typeof loadConfig>>;
   week: ReturnType<typeof getWeekContext>;
-}): Promise<{ record: PurchaseRecord; source: 'fixture' | 'history' | 'snapshot' }> {
+}): Promise<PurchaseRecord> {
   if (options.purchaseSource === 'local-fixture') {
     const raw = await readFile('src/testing/fixtures/purchase-record.fixture.json', 'utf8');
-    return { record: JSON.parse(raw) as PurchaseRecord, source: 'fixture' };
+    return JSON.parse(raw) as PurchaseRecord;
   }
 
   const username = process.env.DHLOTTERY_USERNAME;
   const password = process.env.DHLOTTERY_PASSWORD;
-  return loadRecordWithFallback(
-    () => {
-      if (!username || !password) {
-        throw new Error('DHLOTTERY_USERNAME and DHLOTTERY_PASSWORD are required to load purchase history from dhlottery.co.kr');
-      }
-      return new DhlotteryHistoryProvider().loadWeeklyPurchaseRecord({
-        username,
-        password,
-        week: options.week.week,
-        weekStartDate: options.week.weekStartDate,
-        weekEndDate: options.week.weekEndDate,
-        config: options.config,
-      });
-    },
-    () => loadPurchaseSnapshot(options.week.week),
-  );
-}
-
-export async function loadRecordWithFallback(
-  loadHistory: () => Promise<PurchaseRecord>,
-  loadSnapshot: () => Promise<PurchaseRecord>,
-): Promise<{ record: PurchaseRecord; source: 'history' | 'snapshot' }> {
-  try {
-    return { record: await loadHistory(), source: 'history' };
-  } catch (historyError) {
-    try {
-      return { record: await loadSnapshot(), source: 'snapshot' };
-    } catch (snapshotError) {
-      const historyReason = historyError instanceof Error ? historyError.message : String(historyError);
-      const snapshotReason = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
-      throw new Error(`History unavailable: ${historyReason}; confirmed purchase snapshot unavailable: ${snapshotReason}`);
-    }
+  if (!username || !password) {
+    throw new Error('DHLOTTERY_USERNAME and DHLOTTERY_PASSWORD are required to load purchase history from dhlottery.co.kr');
   }
+  return new DhlotteryHistoryProvider().loadWeeklyPurchaseRecord({
+    username,
+    password,
+    week: options.week.week,
+    weekStartDate: options.week.weekStartDate,
+    weekEndDate: options.week.weekEndDate,
+    config: options.config,
+  });
 }
 
 export async function runSummarizeCommand(options: SummarizeOptions): Promise<string> {
@@ -104,15 +81,13 @@ export async function runSummarizeCommand(options: SummarizeOptions): Promise<st
   let summary: string;
   let record: PurchaseRecord;
   try {
-    const loaded = await loadRecord({ mode: options.mode, purchaseSource, config, week });
-    record = loaded.record;
+    record = await loadRecord({ mode: options.mode, purchaseSource, config, week });
     const results = options.mode === 'live'
       ? await loadLiveResults(record)
       : await loadFixtureResults().then(({ lotto, pension }) => ({ lotto, pension, lottoPending: false, pensionPending: false }));
-    const sourceNote = loaded.source === 'snapshot' ? '\nsource=confirmed automatic purchase snapshot; manual purchases may be absent' : '';
-    summary = `${formatSummary(record, results)}${sourceNote}`;
+    summary = formatSummary(record, results);
     await mkdir('artifacts', { recursive: true });
-    if (loaded.source === 'history') {
+    if (purchaseSource === 'history') {
       await writeFile('artifacts/purchase-record.history.json', `${JSON.stringify(record, null, 2)}\n`, 'utf8');
     }
     await writeFile('artifacts/weekly-summary.txt', `${summary}\n`, 'utf8');

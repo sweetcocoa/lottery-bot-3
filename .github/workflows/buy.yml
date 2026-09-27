@@ -74,15 +74,6 @@ jobs:
             --product=${BUY_PRODUCT} \
             --force=${BUY_FORCE} 2>&1 | tee artifacts/diagnostics/buy-command.log
 
-      - name: Upload confirmed purchase record
-        if: ${{ always() && env.BUY_MODE == 'live' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: purchase-record-${{ github.run_id }}
-          path: artifacts/purchase-record.json
-          if-no-files-found: ignore
-          retention-days: 30
-
       - name: Upload diagnostics
         if: ${{ failure() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'live-check' || inputs.mode == 'smoke') }}
         uses: actions/upload-artifact@v4

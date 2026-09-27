@@ -2,12 +2,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import type { AppConfig } from '../../config/schema.ts';
 import type { PurchaseRecord } from '../../core/purchase-record.ts';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
-import { createBrowserSession, login } from './session.ts';
+import { createBrowserSession } from './session.ts';
+import { loginForHistory } from './history-login.ts';
 import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError } from '../results/fetcher.ts';
 
 const LEDGER_URL = 'https://www.dhlottery.co.kr/mypage/mylotteryledger';
 const LEDGER_READY_TIMEOUT = 15000;
-const HISTORY_SESSION_ATTEMPTS = 3;
+const HISTORY_SESSION_ATTEMPTS = 2;
 
 interface HistoryInput {
   username: string;
@@ -93,7 +94,7 @@ export class DhlotteryHistoryProvider {
   async loadWeeklyPurchasePresence(input: Omit<HistoryInput, 'config'>): Promise<WeeklyPurchasePresence> {
     const { browser, page } = await createBrowserSession();
     try {
-      await login(page, input.username, input.password);
+      await loginForHistory(page.context().request, input.username, input.password);
       await openLedgerPage(page, input.weekStartDate, input.weekEndDate);
       const entries = await loadLedgerEntries(page);
       const weekEntries = entries.filter((entry) => isWithinDateRange(entry.purchaseDate, input.weekStartDate, input.weekEndDate));
@@ -119,7 +120,7 @@ export class DhlotteryHistoryProvider {
     const { browser, page } = await createBrowserSession();
     let latestRounds;
     try {
-      await login(page, input.username, input.password);
+      await loginForHistory(page.context().request, input.username, input.password);
       await openLedgerPage(page, '2002-01-01', currentKstDate());
       const entries = await loadLedgerEntries(page);
       latestRounds = resolveLatestProductRounds(entries);
@@ -143,7 +144,7 @@ export class DhlotteryHistoryProvider {
     for (let attempt = 1; attempt <= HISTORY_SESSION_ATTEMPTS; attempt += 1) {
       const { browser, page } = await createBrowserSession();
       try {
-        await login(page, input.username, input.password);
+        await loginForHistory(page.context().request, input.username, input.password);
         await openLedgerPage(page, shiftIsoDate(input.weekStartDate, -7), input.weekEndDate);
         const entries = await loadLedgerEntries(page);
         const weekEntries = entries.filter((entry) => isWithinDateRange(entry.drawDate, input.weekStartDate, input.weekEndDate));
@@ -184,7 +185,7 @@ export class DhlotteryHistoryProvider {
         ]);
         return record;
       } catch (error) {
-        if (attempt === HISTORY_SESSION_ATTEMPTS) {
+        if (attempt === HISTORY_SESSION_ATTEMPTS || !isTransientHistoryError(error)) {
           await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
           const title = await page.title().catch(() => '');
           const reason = error instanceof Error ? error.message : String(error);
@@ -197,7 +198,7 @@ export class DhlotteryHistoryProvider {
             `title=${title}`,
             `error=${reason}`,
           ]);
-          throw new Error(`Purchase history could not be loaded after ${HISTORY_SESSION_ATTEMPTS} fresh browser sessions: ${reason}`);
+          throw new Error(`Purchase history could not be loaded on session ${attempt}/${HISTORY_SESSION_ATTEMPTS}: ${reason}`);
         }
       } finally {
         await browser.close();
@@ -321,6 +322,11 @@ async function openLedgerPage(page: any, startDate: string, endDate: string): Pr
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isTransientHistoryError(error: unknown): boolean {
+  const reason = error instanceof Error ? error.message : String(error);
+  return /timeout|timed out|ECONNRESET|ECONNREFUSED|ERR_CONNECTION|ERR_TIMED_OUT/i.test(reason);
 }
 
 async function loadLedgerEntries(page: any): Promise<LedgerEntry[]> {

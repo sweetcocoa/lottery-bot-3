@@ -13,15 +13,14 @@ on:
         options:
           - dry-run
           - live
+          - diagnose
 
 jobs:
   results:
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
     env:
-      GH_TOKEN: ${{ github.token }}
       DHLOTTERY_USERNAME: ${{ secrets.DHLOTTERY_USERNAME }}
       DHLOTTERY_PASSWORD: ${{ secrets.DHLOTTERY_PASSWORD }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -39,7 +38,7 @@ jobs:
         run: npm ci --no-fund --no-audit
 
       - name: Verify Playwright with system Chrome
-        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'diagnose' }}
         run: |
           google-chrome --version
           node --input-type=module -e \
@@ -48,17 +47,18 @@ jobs:
       - name: Ensure artifacts dir
         run: mkdir -p artifacts
 
-      - name: Download confirmed purchase snapshot
-        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' }}
-        run: node --experimental-strip-types src/scripts/download-purchase-snapshot.ts
-
       - name: Run summarize command
+        if: ${{ github.event_name == 'schedule' || inputs.mode != 'diagnose' }}
         run: |
           node --experimental-strip-types src/cli.ts summarize \
             --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }}
 
+      - name: Diagnose authenticated purchase history without purchase or notifications
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnose' }}
+        run: node --experimental-strip-types src/scripts/diagnose-history.ts
+
       - name: Upload summary artifact
-        if: ${{ always() && env.ACT != 'true' }}
+        if: ${{ always() && env.ACT != 'true' && (github.event_name == 'schedule' || inputs.mode != 'diagnose') }}
         uses: actions/upload-artifact@v4
         with:
           name: weekly-summary-${{ github.run_id }}

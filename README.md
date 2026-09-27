@@ -115,7 +115,6 @@ node --experimental-strip-types src/cli.ts summarize --mode=live
 - `smoke`는 로그인과 구매 페이지 진입만 확인하고 실제 구매는 하지 않는다.
 - `live-check`는 로그인과 구매내역/결과 조회만 수행하고 실제 구매는 하지 않는다.
 - `live`만 실제 번호 선택과 구매 확정을 수행한다.
-- `results.yml`의 live 모드는 구매내역을 우선 조회하고, 로그인 사이트가 실패하면 같은 주의 확인된 자동 구매 아티팩트를 사용한다.
-- 당첨번호는 동행복권 공개 JSON 응답으로 조회한다. 두 구매 기록 경로가 모두 실패하면 오류를 알리고 작업을 실패 처리한다.
-- 자동 구매 아티팩트 대체 경로에는 수동 구매 내역이 포함되지 않을 수 있다.
+- `results.yml`의 live 모드는 인증된 동행복권 구매내역을 조회해 주간 요약을 만든다. 내역을 읽지 못하면 오류를 알리고 작업을 실패 처리한다.
+- 당첨번호는 동행복권 공개 JSON 응답으로 조회한다.
 - `results.yml` live 에도 `DHLOTTERY_USERNAME`, `DHLOTTERY_PASSWORD` secret 이 필요하다.
