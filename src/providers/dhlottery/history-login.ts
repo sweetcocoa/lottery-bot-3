@@ -54,6 +54,8 @@ export async function loginForHistory(request: any, username: string, password: 
     timeout: REQUEST_TIMEOUT_MS,
   });
   if (ledger.status() !== 200 || !(await ledger.text()).includes('MyLotteryledgerM')) {
-    throw new Error(`Dhlottery login did not establish an authenticated purchase-history session (status=${ledger.status()}, redirect=${ledger.headers().location ?? 'none'})`);
+    const loginRedirect = location ? new URL(location, BASE_URL).pathname : 'none';
+    const ledgerRedirect = ledger.headers().location ? new URL(ledger.headers().location, BASE_URL).pathname : 'none';
+    throw new Error(`Dhlottery login did not establish an authenticated purchase-history session (loginStatus=${loginResponse.status()}, loginRedirect=${loginRedirect}, ledgerStatus=${ledger.status()}, ledgerRedirect=${ledgerRedirect})`);
   }
 }
