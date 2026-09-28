@@ -3,10 +3,16 @@ import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config/schema.ts';
 import {
   buildHistoryPurchaseRecord,
+  getBuyHistoryRange,
   parsePensionTicketText,
   resolveLatestProductRounds,
   resolveUnsettledPurchasePresence,
 } from '../src/providers/dhlottery/history.ts';
+
+test('buy preflight searches only the recent 30 days in KST', () => {
+  assert.deepEqual(getBuyHistoryRange(new Date('2026-09-28T04:00:00Z')), { startDate: '2026-08-29', endDate: '2026-09-28' });
+  assert.deepEqual(getBuyHistoryRange(new Date('2026-09-27T15:00:00Z')), { startDate: '2026-08-29', endDate: '2026-09-28' });
+});
 
 test('parsePensionTicketText parses group and number from ledger text', () => {
   assert.deepEqual(parsePensionTicketText('4조 123456'), { group: 4, number: '123456' });

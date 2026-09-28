@@ -24,6 +24,12 @@ export interface LiveBuyDecision {
 }
 
 export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord | void> {
+  if (options.mode === 'live-check' && options.force) {
+    throw new Error('live-check cannot use force; it must not enter the purchase flow');
+  }
+  if (options.mode === 'dry-run' && options.provider === 'browser') {
+    throw new Error('dry-run must use the mock provider; browser purchases require live mode');
+  }
   const config = await loadConfig();
   const week = getWeekContext(new Date(), options.targetWeek);
   const seed = options.seed ?? `${week.week}:${options.mode}`;
@@ -104,6 +110,7 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
       await telegram.send(`${config.notifications.live_prefix} [SMOKE] buy readiness check completed for ${week.week}\n${result.diagnosticsPath}`);
       return;
     }
+    if (options.mode !== 'live') throw new Error('Browser purchases require live mode');
     const result = await browser.purchase({
       username,
       password,
