@@ -15,6 +15,7 @@ on:
           - smoke
           - live-check
           - live
+          - diagnose
       product:
         description: Product to buy
         required: false
@@ -57,7 +58,7 @@ jobs:
         run: npm ci --no-fund --no-audit
 
       - name: Verify system Chrome
-        if: ${{ github.event_name == 'schedule' || inputs.mode == 'smoke' || inputs.mode == 'live-check' || inputs.mode == 'live' }}
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'smoke' || inputs.mode == 'live-check' || inputs.mode == 'live' || inputs.mode == 'diagnose' }}
         run: |
           test -d "/Applications/Google Chrome.app"
           "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
@@ -67,12 +68,20 @@ jobs:
 
       - name: Run buy command
         id: run_buy
+        if: ${{ github.event_name == 'schedule' || inputs.mode != 'diagnose' }}
         run: |
           set -o pipefail
           node --experimental-strip-types src/cli.ts buy \
             --mode=${BUY_MODE} \
             --product=${BUY_PRODUCT} \
             --force=${BUY_FORCE} 2>&1 | tee artifacts/diagnostics/buy-command.log
+
+      - name: Diagnose buy preflight without purchases or notifications
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnose' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ''
+          TELEGRAM_CHAT_ID: ''
+        run: node --experimental-strip-types src/scripts/diagnose-buy.ts
 
       - name: Upload diagnostics
         if: ${{ failure() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'live-check' || inputs.mode == 'smoke') }}
@@ -83,5 +92,5 @@ jobs:
           if-no-files-found: warn
 
       - name: Send failure alert
-        if: ${{ failure() && env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_CHAT_ID != '' }}
+        if: ${{ failure() && inputs.mode != 'diagnose' && env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_CHAT_ID != '' }}
         run: node --experimental-strip-types src/scripts/send-buy-failure-alert.ts
