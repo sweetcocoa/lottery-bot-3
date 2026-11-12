@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchLottoResult, fetchPensionResult } from '../src/providers/results/fetcher.ts';
+import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError } from '../src/providers/results/fetcher.ts';
+
+test('only a valid empty result list is considered unpublished', async () => {
+  const json = (value: unknown): typeof fetch => async () => Response.json(value);
+  await assert.rejects(fetchLottoResult(1250, json({ data: { list: [] } })), isResultNotPublishedError);
+  await assert.rejects(fetchPensionResult(341, json({ data: { result: [] } })), isResultNotPublishedError);
+  await assert.rejects(fetchLottoResult(1250, json({ data: { list: null } })), /invalid row list/);
+  await assert.rejects(fetchPensionResult(341, json({ resultCode: 'FAIL', data: { result: [] } })), /rejected/);
+  await assert.rejects(fetchLottoResult(1250, json({ data: { list: [{ ltEpsd: 1249 }] } })), /does not identify round/);
+  assert.equal(isResultNotPublishedError(new Error('is not published yet')), false);
+});
 
 test('result fetchers parse the public JSON endpoints without browser navigation', async () => {
   const calls: string[] = [];

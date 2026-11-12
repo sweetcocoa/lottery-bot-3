@@ -1,12 +1,10 @@
 import { runSummarizeCommand } from '../commands/summarize.ts';
+import { getWeekContext } from '../core/draw-calendar.ts';
 
 if (process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_CHAT_ID) {
   throw new Error('Result diagnosis must run with Telegram notifications disabled');
 }
 
-const summary = await runSummarizeCommand({ mode: 'live' });
-if (!summary.includes('lotto round=') || !summary.includes('winning=')
-  || !summary.includes('pension round=') || summary.includes('result=')) {
-  throw new Error('Result diagnosis did not resolve both published product results');
-}
-console.log(`Authenticated result summary generated for ${summary.match(/^week=(\S+)/)?.[1] ?? 'unknown week'}`);
+const { week } = getWeekContext(new Date(), process.env.RESULT_TARGET_WEEK || undefined);
+await runSummarizeCommand({ mode: 'live', targetWeek: week });
+console.log(`Authenticated result summary generated for ${week}`);

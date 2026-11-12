@@ -1,4 +1,4 @@
-export function ledgerPageInfo(value: unknown, status: number): { rowCount: number; total: number } {
+export function parseLedgerPage(value: unknown, status: number): { rows: unknown[]; total: number } {
   if (status !== 200) throw new Error(`Purchase history search returned HTTP ${status}`);
   if (!value || typeof value !== 'object') throw new Error('Purchase history search returned an invalid response');
   const payload = value as { resultCode?: unknown; resultMessage?: unknown; data?: { list?: unknown; total?: unknown } };
@@ -15,7 +15,12 @@ export function ledgerPageInfo(value: unknown, status: number): { rowCount: numb
   if (!Number.isInteger(total) || total < payload.data.list.length) {
     throw new Error('Purchase history search response contains an invalid total count');
   }
-  return { rowCount: payload.data.list.length, total };
+  return { rows: payload.data.list, total };
+}
+
+export function ledgerPageInfo(value: unknown, status: number): { rowCount: number; total: number } {
+  const { rows, total } = parseLedgerPage(value, status);
+  return { rowCount: rows.length, total };
 }
 
 export async function collectLedgerPages<T>(

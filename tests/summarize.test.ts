@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runSummarizeCommand } from '../src/commands/summarize.ts';
 
+test('summarize rejects mixing authenticated and fixture modes', async () => {
+  await assert.rejects(runSummarizeCommand({ mode: 'dry-run', purchaseSource: 'history' }), /requires purchase source local-fixture/);
+  await assert.rejects(runSummarizeCommand({ mode: 'live', purchaseSource: 'local-fixture' }), /requires purchase source history/);
+});
+
 test('summarize dry-run creates a readable summary', async () => {
   const summary = await runSummarizeCommand({ mode: 'dry-run', purchaseSource: 'local-fixture' });
   assert.match(summary, /lotto round=/);

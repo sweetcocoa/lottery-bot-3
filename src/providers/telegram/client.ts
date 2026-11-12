@@ -2,6 +2,7 @@ type FetchImplementation = typeof fetch;
 type Sleep = (milliseconds: number) => Promise<void>;
 
 const MAX_SEND_ATTEMPTS = 3;
+const SEND_TIMEOUT_MS = 10000;
 
 class TelegramSendError extends Error {
   readonly retryable: boolean;
@@ -41,6 +42,7 @@ export class TelegramClient {
       try {
         const response = await this.fetchImplementation(`https://api.telegram.org/bot${this.token}/sendMessage`, {
           method: 'POST',
+          signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             chat_id: this.chatId,

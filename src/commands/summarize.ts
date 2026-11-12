@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { loadConfig } from '../config/schema.ts';
 import { getWeekContext } from '../core/draw-calendar.ts';
 import type { PurchaseRecord } from '../core/purchase-record.ts';
-import { DhlotteryHistoryProvider } from '../providers/dhlottery/history.ts';
+import { loadWeeklyPurchaseRecord } from '../providers/dhlottery/weekly-history.ts';
 import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError, loadFixtureResults } from '../providers/results/fetcher.ts';
 import { TelegramClient } from '../providers/telegram/client.ts';
 
@@ -49,7 +49,6 @@ function formatSummary(record: PurchaseRecord, input: {
 }
 
 async function loadRecord(options: {
-  mode: 'dry-run' | 'live';
   purchaseSource: 'history' | 'local-fixture';
   config: Awaited<ReturnType<typeof loadConfig>>;
   week: ReturnType<typeof getWeekContext>;
@@ -64,7 +63,7 @@ async function loadRecord(options: {
   if (!username || !password) {
     throw new Error('DHLOTTERY_USERNAME and DHLOTTERY_PASSWORD are required to load purchase history from dhlottery.co.kr');
   }
-  return new DhlotteryHistoryProvider().loadWeeklyPurchaseRecord({
+  return loadWeeklyPurchaseRecord({
     username,
     password,
     week: options.week.week,
@@ -75,13 +74,18 @@ async function loadRecord(options: {
 }
 
 export async function runSummarizeCommand(options: SummarizeOptions): Promise<string> {
+  const purchaseSource = options.mode === 'live' ? 'history' : 'local-fixture';
+  if (options.purchaseSource && options.purchaseSource !== purchaseSource) {
+    throw new Error(`Result summary mode ${options.mode} requires purchase source ${purchaseSource}`);
+  }
   const config = await loadConfig();
   const week = getWeekContext(new Date(), options.targetWeek);
-  const purchaseSource = options.purchaseSource ?? (options.mode === 'live' ? 'history' : 'local-fixture');
+  const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
+  const telegram = new TelegramClient();
   let summary: string;
   let record: PurchaseRecord;
   try {
-    record = await loadRecord({ mode: options.mode, purchaseSource, config, week });
+    record = await loadRecord({ purchaseSource, config, week });
     const results = options.mode === 'live'
       ? await loadLiveResults(record)
       : await loadFixtureResults().then(({ lotto, pension }) => ({ lotto, pension, lottoPending: false, pensionPending: false }));
@@ -92,21 +96,23 @@ export async function runSummarizeCommand(options: SummarizeOptions): Promise<st
     }
     await writeFile('artifacts/weekly-summary.txt', `${summary}\n`, 'utf8');
   } catch (error) {
-    const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
     const reason = error instanceof Error ? error.message : String(error);
     const message = `${prefix} weekly summary failed for ${week.week}\nreason=${reason}`;
-    await mkdir('artifacts', { recursive: true });
-    await writeFile('artifacts/weekly-summary.txt', `${message}\n`, 'utf8');
-    const telegram = new TelegramClient();
+    await mkdir('artifacts', { recursive: true })
+      .then(() => writeFile('artifacts/weekly-summary.txt', `${message}\n`, 'utf8'))
+      .catch(() => console.error('Could not save weekly summary failure artifact'));
     await telegram.send(message).catch((alertError) => {
       console.error(`Could not send weekly summary failure alert: ${alertError}`);
     });
     throw error;
   }
 
-  const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
-  const telegram = new TelegramClient();
-  await telegram.send(`${prefix} weekly summary for ${record.week}\n${summary}`);
+  try {
+    await telegram.send(`${prefix} weekly summary for ${record.week}\n${summary}`);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Weekly summary for ${record.week} was saved, but notification failed: ${reason}`, { cause: error });
+  }
   return summary;
 }
 

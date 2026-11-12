@@ -13,16 +13,18 @@ const BASE_URL = 'https://www.dhlottery.co.kr';
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 10000;
 
+export class ResultNotPublishedError extends Error {
+  constructor(product: 'Lotto' | 'Pension', round: number) {
+    super(`${product} result for round ${round} is not published yet`);
+  }
+}
+
 export async function fetchLottoResult(round: number, fetchImpl: typeof fetch = fetch): Promise<LottoResult> {
   const payload = await fetchResultPayload(
     `${BASE_URL}/lt645/selectPstLt645InfoNew.do?srchDir=center&srchLtEpsd=${round}`,
     fetchImpl,
   );
-  const rows = asArray(payload?.data?.list);
-  const item = rows.find((candidate) => Number(candidate?.ltEpsd) === round);
-  if (!item) {
-    throw new Error(`Lotto result for round ${round} is not published yet`);
-  }
+  const [item] = readResultRows(payload, 'list', 'ltEpsd', round, 'Lotto');
 
   const numbers = [1, 2, 3, 4, 5, 6].map((index) => Number(item[`tm${index}WnNo`]));
   const bonus = Number(item.bnsWnNo);
@@ -39,11 +41,7 @@ export async function fetchPensionResult(round: number, fetchImpl: typeof fetch 
     `${BASE_URL}/pt720/selectPstPt720Info.do?srchPsltEpsd=${round}`,
     fetchImpl,
   );
-  const rows = asArray(payload?.data?.result)
-    .filter((candidate) => Number(candidate?.psltEpsd) === round);
-  if (!rows.length) {
-    throw new Error(`Pension result for round ${round} is not published yet`);
-  }
+  const rows = readResultRows(payload, 'result', 'psltEpsd', round, 'Pension');
 
   const firstPrize = rows.find((candidate) => Number(candidate.wnSqNo) === 1);
   if (!firstPrize) {
@@ -70,7 +68,7 @@ export async function fetchPensionResult(round: number, fetchImpl: typeof fetch 
   return { drawRound: round, winningNumbers: dedupeWinningNumbers(winningNumbers) };
 }
 
-async function fetchResultPayload(url: string, fetchImpl: typeof fetch): Promise<any> {
+async function fetchResultPayload(url: string, fetchImpl: typeof fetch): Promise<unknown> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt += 1) {
     try {
@@ -85,6 +83,7 @@ async function fetchResultPayload(url: string, fetchImpl: typeof fetch): Promise
       }
     } catch (error) {
       if (error instanceof PermanentResultRequestError) throw error;
+      if (error instanceof SyntaxError) throw new Error('Dhlottery result response was not valid JSON');
       lastError = error;
     }
     if (attempt < REQUEST_ATTEMPTS) {
@@ -101,12 +100,30 @@ class PermanentResultRequestError extends Error {
   }
 }
 
-function asArray(value: unknown): Array<Record<string, unknown>> {
-  return Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : [];
+function readResultRows(
+  payload: unknown,
+  listKey: 'list' | 'result',
+  roundKey: 'ltEpsd' | 'psltEpsd',
+  round: number,
+  product: 'Lotto' | 'Pension',
+): Array<Record<string, unknown>> {
+  const envelope = payload as { resultCode?: unknown; data?: Record<string, unknown> } | null;
+  if (envelope?.resultCode) throw new Error(`${product} result request rejected by Dhlottery for round ${round}`);
+  const rows = envelope?.data?.[listKey];
+  if (!Array.isArray(rows) || rows.some((row) => !row || typeof row !== 'object' || Array.isArray(row)
+    || !/^\d+$/.test(String(row[roundKey])) || Number(row[roundKey]) < 1)) {
+    throw new Error(`${product} result response has an invalid row list for round ${round}`);
+  }
+  if (rows.length === 0) throw new ResultNotPublishedError(product, round);
+  const matching = rows.filter((row) => Number(row[roundKey]) === round);
+  if (matching.length === 0 || (product === 'Lotto' && matching.length !== 1)) {
+    throw new Error(`${product} result response does not identify round ${round} unambiguously`);
+  }
+  return matching;
 }
 
 export function isResultNotPublishedError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('is not published yet');
+  return error instanceof ResultNotPublishedError;
 }
 
 function dedupeWinningNumbers(items: Array<{ group: number; number: string }>): Array<{ group: number; number: string }> {
