@@ -10,7 +10,7 @@ async function main(): Promise<void> {
   const failureReason = await readBuyFailureReason();
 
   const lines = [
-    '[LIVE] buy failed',
+    '[LIVE] buy workflow stopped',
     `mode=${mode}`,
     `product=${product}`,
   ];

@@ -25,9 +25,14 @@ export async function createBrowserSession(): Promise<{ browser: any; context: a
     launchOptions.channel = process.env.PLAYWRIGHT_CHROMIUM_CHANNEL;
   }
   const browser = await launchChromium(playwright, launchOptions);
-  const context = await browser.newContext(CONTEXT_OPTIONS);
-  const page = await context.newPage();
-  return { browser, context, page };
+  try {
+    const context = await browser.newContext(CONTEXT_OPTIONS);
+    const page = await context.newPage();
+    return { browser, context, page };
+  } catch (error) {
+    await browser.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function gotoWithRetries(page: any, url: string, options: Record<string, unknown>): Promise<void> {
@@ -77,6 +82,7 @@ export async function login(page: any, username: string, password: string): Prom
     () => typeof (window as any).login === 'function'
       && typeof (window as any).fnRSAencrypt === 'function'
       && !!(window as any).rsa?.n,
+    null,
     { timeout: 30000 },
   );
   await page.evaluate(({ username, password }) => {
@@ -93,12 +99,9 @@ export async function login(page: any, username: string, password: string): Prom
     pwInput.dispatchEvent(new Event('change', { bubbles: true }));
     // @ts-ignore
     login();
-  }, { username, password });
-  await page.waitForTimeout(1000);
-  await page.waitForFunction(
-    () => window.location.pathname !== '/login',
-    { timeout: 15000 },
-  ).catch(() => undefined);
+  }, { username, password }).catch(() => { throw new Error('Dhlottery browser login submission failed'); });
+  await page.waitForURL((url: URL) => url.pathname !== '/login', { waitUntil: 'commit', timeout: 15000 })
+    .catch(() => { throw new Error('Dhlottery browser login did not leave the login page'); });
 
   const finalUrl = page.url();
   if (finalUrl.includes(EXPIRED_PASSWORD_PATH)) {

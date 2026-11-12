@@ -94,4 +94,5 @@ test('live-check decision respects product targeting', () => {
 test('read-only buy modes cannot enter the browser purchase flow', async () => {
   await assert.rejects(runBuyCommand({ mode: 'live-check', force: true }), /live-check cannot use force/);
   await assert.rejects(runBuyCommand({ mode: 'dry-run', provider: 'browser' }), /dry-run must use the mock provider/);
+  await assert.rejects(runBuyCommand({ mode: 'live', provider: 'mock' }), /Live modes cannot use the mock provider/);
 });

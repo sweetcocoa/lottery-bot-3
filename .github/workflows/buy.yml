@@ -31,6 +31,10 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  group: buy-lottery
+  cancel-in-progress: false
+
 jobs:
   buy:
     runs-on: macos-15-intel

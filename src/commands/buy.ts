@@ -1,6 +1,6 @@
 import { loadConfig } from '../config/schema.ts';
 import { getWeekContext } from '../core/draw-calendar.ts';
-import { createReceiptId, savePurchaseRecord, type PurchaseRecord } from '../core/purchase-record.ts';
+import { savePurchaseRecord, type PurchaseRecord } from '../core/purchase-record.ts';
 import { resolveLottoTickets, resolvePensionTickets } from '../core/random-picks.ts';
 import { BrowserDhlotteryProvider } from '../providers/dhlottery/browser.ts';
 import { DhlotteryHistoryProvider } from '../providers/dhlottery/history.ts';
@@ -30,6 +30,9 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
   if (options.mode === 'dry-run' && options.provider === 'browser') {
     throw new Error('dry-run must use the mock provider; browser purchases require live mode');
   }
+  if ((options.mode === 'live' || options.mode === 'live-check') && options.provider === 'mock') {
+    throw new Error('Live modes cannot use the mock provider');
+  }
   const config = await loadConfig();
   const week = getWeekContext(new Date(), options.targetWeek);
   const seed = options.seed ?? `${week.week}:${options.mode}`;
@@ -43,11 +46,11 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
   const provider = options.provider ?? (options.mode === 'dry-run' ? 'mock' : 'browser');
   const telegram = new TelegramClient();
 
-  let receiptId = createReceiptId(provider, week.week);
+  let receipts: { lotto?: string; pension?: string };
   if (provider === 'mock') {
     const mock = new MockDhlotteryProvider();
     const result = await mock.purchase({ mode: options.mode, week: week.week, lottoTickets, pensionTickets });
-    receiptId = result.receiptId;
+    receipts = { lotto: lottoTickets.length ? result.receiptId : undefined, pension: pensionTickets.length ? result.receiptId : undefined };
     if (options.mode === 'smoke') {
       await telegram.send(`${config.notifications.live_prefix} [SMOKE] buy readiness check completed for ${week.week}\n${result.diagnosticsPath}`);
       return;
@@ -115,21 +118,19 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
       username,
       password,
       week: week.week,
+      lottoRound: week.lottoRound,
+      pensionRound: week.pensionRound,
       lottoTickets: lottoTicketsToBuy,
       pensionTickets: pensionTicketsToBuy,
     });
-    receiptId = result.receiptId ?? receiptId;
-    recordPensionTickets = result.actualPensionTickets ?? recordPensionTickets;
-    if (recordPensionTickets.length === 0) {
-      pensionStatus = 'skipped';
-    }
+    receipts = result.receipts;
   }
 
   const record = buildPurchaseRecord({
     config,
     week: week.week,
     mode: options.mode,
-    receiptId,
+    receipts,
     lottoTickets: recordLottoTickets,
     pensionTickets: recordPensionTickets,
     lottoStatus,
@@ -138,14 +139,20 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
     pensionRound: week.pensionRound,
   });
 
-  await savePurchaseRecord(record);
+  await savePurchaseRecord(record).catch((error) => {
+    if (options.mode !== 'live') throw error;
+    throw new Error('Purchase receipts were confirmed, but the local purchase record could not be saved. Check account history before another run.', { cause: error });
+  });
   const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
   await telegram.send([
     `${prefix} buy completed for ${week.week}`,
     `product=${product}`,
     `lotto=${formatLottoSummary(recordLottoTickets, lottoStatus)}`,
     `pension=${formatPensionSummary(recordPensionTickets, pensionStatus)}`,
-  ].join('\n'));
+  ].join('\n')).catch((error) => {
+    if (options.mode !== 'live') throw error;
+    throw new Error('Purchase receipts were confirmed and recorded, but the notification failed.', { cause: error });
+  });
   return record;
 }
 
@@ -153,7 +160,7 @@ function buildPurchaseRecord(input: {
   config: Awaited<ReturnType<typeof loadConfig>>;
   week: string;
   mode: BuyOptions['mode'];
-  receiptId: string;
+  receipts: { lotto?: string; pension?: string };
   lottoTickets: PurchaseRecord['lotto']['tickets'];
   pensionTickets: PurchaseRecord['pension']['tickets'];
   lottoStatus: PurchaseRecord['lotto']['status'];
@@ -161,6 +168,9 @@ function buildPurchaseRecord(input: {
   lottoRound: number;
   pensionRound: number;
 }): PurchaseRecord {
+  if ((input.lottoStatus === 'purchased' && !input.receipts.lotto) || (input.pensionStatus === 'purchased' && !input.receipts.pension)) {
+    throw new Error('A purchase receipt was not verified. Check account history before another run.');
+  }
   return {
     week: input.week,
     mode: input.mode === 'smoke' ? 'dry-run' : input.mode,
@@ -171,7 +181,7 @@ function buildPurchaseRecord(input: {
       count: input.lottoTickets.length,
       drawRound: input.lottoRound,
       status: input.lottoStatus,
-      receiptId: input.receiptId,
+      receiptId: input.receipts.lotto ?? '',
     },
     pension: {
       mode: input.config.pension.mode,
@@ -179,7 +189,7 @@ function buildPurchaseRecord(input: {
       count: input.pensionTickets.length,
       drawRound: input.pensionRound,
       status: input.pensionStatus,
-      receiptId: input.receiptId,
+      receiptId: input.receipts.pension ?? '',
     },
     runContext: {
       workflow: 'buy.yml',
