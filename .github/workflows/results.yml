@@ -14,10 +14,16 @@ on:
           - dry-run
           - live
           - diagnose
+          - probe
+      target_week:
+        description: 'Optional draw week for diagnose mode (YYYY-Www)'
+        required: false
+        type: string
 
 jobs:
   results:
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     permissions:
       contents: read
     env:
@@ -38,7 +44,7 @@ jobs:
         run: npm ci --no-fund --no-audit
 
       - name: Verify Playwright with system Chrome
-        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'diagnose' }}
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'diagnose' || inputs.mode == 'probe' }}
         run: |
           google-chrome --version
           node --input-type=module -e \
@@ -48,7 +54,7 @@ jobs:
         run: mkdir -p artifacts
 
       - name: Run summarize command
-        if: ${{ github.event_name == 'schedule' || inputs.mode != 'diagnose' }}
+        if: ${{ github.event_name == 'schedule' || (inputs.mode != 'diagnose' && inputs.mode != 'probe') }}
         run: |
           node --experimental-strip-types src/cli.ts summarize \
             --mode=${{ github.event_name == 'schedule' && 'live' || inputs.mode }}
@@ -58,10 +64,18 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ''
           TELEGRAM_CHAT_ID: ''
+          RESULT_TARGET_WEEK: ${{ inputs.target_week }}
         run: node --experimental-strip-types src/scripts/diagnose-results.ts
 
+      - name: Inspect read-only history response shapes
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'probe' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ''
+          TELEGRAM_CHAT_ID: ''
+        run: node --experimental-strip-types src/scripts/probe-history-contract.ts
+
       - name: Upload summary artifact
-        if: ${{ always() && env.ACT != 'true' && (github.event_name == 'schedule' || inputs.mode != 'diagnose') }}
+        if: ${{ always() && env.ACT != 'true' && (github.event_name == 'schedule' || (inputs.mode != 'diagnose' && inputs.mode != 'probe')) }}
         uses: actions/upload-artifact@v4
         with:
           name: weekly-summary-${{ github.run_id }}
