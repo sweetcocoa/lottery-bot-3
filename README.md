@@ -120,6 +120,6 @@ node --experimental-strip-types src/cli.ts summarize --mode=live
 - `results.yml`의 live 모드는 브라우저 없이 인증된 HTTP 세션으로 동행복권 구매내역과 티켓 상세를 조회해 주간 요약을 만든다. 내역을 읽지 못하면 오류를 알리고 작업을 실패 처리한다.
 - 로그인 페이지 등 내역 조회의 GET 요청은 일시적인 연결 오류에 한해 한 번 재시도한다. 로그인 제출은 반복하지 않는다.
 - 주간 결과는 구매내역의 모든 페이지를 확인한다. 실제 내역이 비어 있는 경우에만 구매 없음으로 표시한다.
-- 당첨번호는 동행복권 공개 JSON 응답으로 조회한다. 정상 응답의 빈 목록은 미발표로, 응답 오류는 실패로 처리한다.
+- 당첨번호는 동행복권 공개 JSON 응답으로 조회한다. 추첨일까지는 정상 응답에 해당 회차가 없으면 미발표로 표시한다. 추첨일이 지나도 없거나 응답이 잘못된 경우 실패로 처리한다.
 - `results.yml`의 `diagnose`는 알림 없이 실제 내역을 조회한다. `target_week`에 `YYYY-Www`를 지정하면 지난 주차를 확인할 수 있다.
 - `results.yml` live 에도 `DHLOTTERY_USERNAME`, `DHLOTTERY_PASSWORD` secret 이 필요하다.

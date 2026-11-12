@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError } from '../src/providers/results/fetcher.ts';
 
-test('only a valid empty result list is considered unpublished', async () => {
+test('valid empty and older-only pension responses are distinct from invalid responses', async () => {
   const json = (value: unknown): typeof fetch => async () => Response.json(value);
   await assert.rejects(fetchLottoResult(1250, json({ data: { list: [] } })), isResultNotPublishedError);
   await assert.rejects(fetchPensionResult(341, json({ data: { result: [] } })), isResultNotPublishedError);
+  await assert.rejects(fetchPensionResult(341, json({ data: { result: [{ psltEpsd: 340 }] } })), isResultNotPublishedError);
+  await assert.rejects(fetchPensionResult(341, json({ data: { result: [{ psltEpsd: 342 }] } })), /does not identify round/);
   await assert.rejects(fetchLottoResult(1250, json({ data: { list: null } })), /invalid row list/);
   await assert.rejects(fetchPensionResult(341, json({ resultCode: 'FAIL', data: { result: [] } })), /rejected/);
   await assert.rejects(fetchLottoResult(1250, json({ data: { list: [{ ltEpsd: 1249 }] } })), /does not identify round/);

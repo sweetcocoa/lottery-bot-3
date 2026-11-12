@@ -79,7 +79,8 @@ export async function runSummarizeCommand(options: SummarizeOptions): Promise<st
     throw new Error(`Result summary mode ${options.mode} requires purchase source ${purchaseSource}`);
   }
   const config = await loadConfig();
-  const week = getWeekContext(new Date(), options.targetWeek);
+  const now = new Date();
+  const week = getWeekContext(now, options.targetWeek);
   const prefix = options.mode === 'live' ? config.notifications.live_prefix : config.notifications.dry_run_prefix;
   const telegram = new TelegramClient();
   let summary: string;
@@ -87,7 +88,7 @@ export async function runSummarizeCommand(options: SummarizeOptions): Promise<st
   try {
     record = await loadRecord({ purchaseSource, config, week });
     const results = options.mode === 'live'
-      ? await loadLiveResults(record)
+      ? await loadLiveResults(record, week, now)
       : await loadFixtureResults().then(({ lotto, pension }) => ({ lotto, pension, lottoPending: false, pensionPending: false }));
     summary = formatSummary(record, results);
     await mkdir('artifacts', { recursive: true });
@@ -116,15 +117,15 @@ export async function runSummarizeCommand(options: SummarizeOptions): Promise<st
   return summary;
 }
 
-async function loadLiveResults(record: PurchaseRecord): Promise<{
+async function loadLiveResults(record: PurchaseRecord, week: ReturnType<typeof getWeekContext>, now: Date): Promise<{
   lotto?: Awaited<ReturnType<typeof fetchLottoResult>>;
   pension?: Awaited<ReturnType<typeof fetchPensionResult>>;
   lottoPending: boolean;
   pensionPending: boolean;
 }> {
   const [lotto, pension] = await Promise.all([
-    loadResult(record.lotto.tickets.length > 0 ? () => fetchLottoResult(record.lotto.drawRound) : undefined),
-    loadResult(record.pension.tickets.length > 0 ? () => fetchPensionResult(record.pension.drawRound) : undefined),
+    loadResult(record.lotto.tickets.length > 0 ? () => fetchLottoResult(record.lotto.drawRound) : undefined, week.lottoDrawDate, now),
+    loadResult(record.pension.tickets.length > 0 ? () => fetchPensionResult(record.pension.drawRound) : undefined, week.pensionDrawDate, now),
   ]);
   return {
     lotto: lotto.result,
@@ -134,7 +135,9 @@ async function loadLiveResults(record: PurchaseRecord): Promise<{
   };
 }
 
-async function loadResult<T>(fetchResult?: () => Promise<T>): Promise<{ result?: T; pending: boolean }> {
+const KST_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+export async function loadResult<T>(fetchResult: (() => Promise<T>) | undefined, drawDate: Date, now: Date): Promise<{ result?: T; pending: boolean }> {
   if (!fetchResult) {
     return { pending: false };
   }
@@ -142,7 +145,8 @@ async function loadResult<T>(fetchResult?: () => Promise<T>): Promise<{ result?:
     return { result: await fetchResult(), pending: false };
   } catch (error) {
     if (isResultNotPublishedError(error)) {
-      return { pending: true };
+      if (KST_DAY.format(now) <= KST_DAY.format(drawDate)) return { pending: true };
+      throw new Error(`Expected result is missing after the draw date: ${error.message}`, { cause: error });
     }
     throw error;
   }

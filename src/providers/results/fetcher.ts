@@ -114,15 +114,18 @@ function readResultRows(
     || !/^\d+$/.test(String(row[roundKey])) || Number(row[roundKey]) < 1)) {
     throw new Error(`${product} result response has an invalid row list for round ${round}`);
   }
-  if (rows.length === 0) throw new ResultNotPublishedError(product, round);
   const matching = rows.filter((row) => Number(row[roundKey]) === round);
+  // Before the requested pension draw, the endpoint can return only older rounds.
+  if (rows.length === 0 || (product === 'Pension' && rows.every((row) => Number(row[roundKey]) < round))) {
+    throw new ResultNotPublishedError(product, round);
+  }
   if (matching.length === 0 || (product === 'Lotto' && matching.length !== 1)) {
     throw new Error(`${product} result response does not identify round ${round} unambiguously`);
   }
   return matching;
 }
 
-export function isResultNotPublishedError(error: unknown): boolean {
+export function isResultNotPublishedError(error: unknown): error is ResultNotPublishedError {
   return error instanceof ResultNotPublishedError;
 }
 

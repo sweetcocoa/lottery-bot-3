@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { runSummarizeCommand } from '../src/commands/summarize.ts';
+import { loadResult, runSummarizeCommand } from '../src/commands/summarize.ts';
+import { ResultNotPublishedError } from '../src/providers/results/fetcher.ts';
+
+test('missing results stay pending only through the scheduled draw date in KST', async () => {
+  const drawDate = new Date('2026-11-12T19:00:00+09:00');
+  const unpublished = async () => { throw new ResultNotPublishedError('Pension', 341); };
+  assert.deepEqual(await loadResult(unpublished, drawDate, new Date('2026-11-12T14:59:00Z')), { pending: true });
+  await assert.rejects(loadResult(unpublished, drawDate, new Date('2026-11-12T15:00:00Z')), /missing after the draw date/);
+});
 
 test('summarize rejects mixing authenticated and fixture modes', async () => {
   await assert.rejects(runSummarizeCommand({ mode: 'dry-run', purchaseSource: 'history' }), /requires purchase source local-fixture/);
