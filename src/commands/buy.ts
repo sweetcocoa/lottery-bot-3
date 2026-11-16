@@ -3,7 +3,7 @@ import { getWeekContext } from '../core/draw-calendar.ts';
 import { savePurchaseRecord, type PurchaseRecord } from '../core/purchase-record.ts';
 import { resolveLottoTickets, resolvePensionTickets } from '../core/random-picks.ts';
 import { BrowserDhlotteryProvider } from '../providers/dhlottery/browser.ts';
-import { DhlotteryHistoryProvider } from '../providers/dhlottery/history.ts';
+import { DhlotteryHistoryProvider, readUnsettledPurchasePresence, type UnsettledPurchasePresence } from '../providers/dhlottery/history.ts';
 import { MockDhlotteryProvider } from '../providers/dhlottery/mock.ts';
 import { TelegramClient } from '../providers/telegram/client.ts';
 
@@ -61,52 +61,21 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
     if (!username || !password) {
       throw new Error('DHLOTTERY_USERNAME and DHLOTTERY_PASSWORD are required for browser provider');
     }
-    let lottoTicketsToBuy = lottoTickets;
-    let pensionTicketsToBuy = pensionTickets;
-    if ((options.mode === 'live' || options.mode === 'live-check') && !options.force) {
-      const history = new DhlotteryHistoryProvider();
-      const unsettled = await history.loadUnsettledPurchasePresence({
-        username,
-        password,
-        checkLotto: lottoTicketsToBuy.length > 0,
-        checkPension: pensionTicketsToBuy.length > 0,
-      });
-      const decision = evaluateLiveBuyDecision({
-        product,
-        requestedLotto: lottoTicketsToBuy.length > 0,
-        requestedPension: pensionTicketsToBuy.length > 0,
-        unsettled,
-      });
-      if (!decision.lottoShouldBuy) {
-        lottoTicketsToBuy = [];
-        lottoStatus = 'skipped';
-      }
-      if (!decision.pensionShouldBuy) {
-        pensionTicketsToBuy = [];
-        pensionStatus = 'skipped';
-      }
-      if (options.mode === 'live-check') {
-        const message = [
-          `${config.notifications.live_prefix} [CHECK] buy decision for ${week.week}`,
-          `product=${product}`,
-          `lotto=${decision.lottoReason}`,
-          `pension=${decision.pensionReason}`,
-        ].join('\n');
-        await telegram.send(message);
-        return;
-      }
-      if (lottoTicketsToBuy.length === 0 && pensionTicketsToBuy.length === 0) {
-        await telegram.send([
-          `${config.notifications.live_prefix} buy skipped for ${week.week}`,
-          `product=${product}`,
-          `lotto=${decision.lottoReason}`,
-          `pension=${decision.pensionReason}`,
-        ].join('\n'));
-        return;
-      }
+    const checks = { checkLotto: lottoTickets.length > 0, checkPension: pensionTickets.length > 0 };
+    const decide = (unsettled: UnsettledPurchasePresence) => evaluateLiveBuyDecision({
+      product, requestedLotto: checks.checkLotto, requestedPension: checks.checkPension, unsettled,
+    });
+    const notifyDecision = (message: string, decision: LiveBuyDecision) => telegram.send([
+      `${config.notifications.live_prefix} ${message} for ${week.week}`,
+      `product=${product}`,
+      decision.lottoReason,
+      decision.pensionReason,
+    ].join('\n'));
+    if (options.mode === 'live-check') {
+      const unsettled = await new DhlotteryHistoryProvider().loadUnsettledPurchasePresence({ username, password, ...checks });
+      await notifyDecision('[CHECK] buy decision', decide(unsettled));
+      return;
     }
-    recordLottoTickets = lottoTicketsToBuy;
-    recordPensionTickets = pensionTicketsToBuy;
     const browser = new BrowserDhlotteryProvider();
     if (options.mode === 'smoke') {
       const result = await browser.smoke({ username, password, week: week.week, lottoTickets, pensionTickets });
@@ -114,15 +83,33 @@ export async function runBuyCommand(options: BuyOptions): Promise<PurchaseRecord
       return;
     }
     if (options.mode !== 'live') throw new Error('Browser purchases require live mode');
+    let decision: LiveBuyDecision | undefined;
     const result = await browser.purchase({
       username,
       password,
       week: week.week,
       lottoRound: week.lottoRound,
       pensionRound: week.pensionRound,
-      lottoTickets: lottoTicketsToBuy,
-      pensionTickets: pensionTicketsToBuy,
+      lottoTickets,
+      pensionTickets,
+    }, async (request) => {
+      if (!options.force) {
+        decision = decide(await readUnsettledPurchasePresence(request, checks));
+        if (!decision.lottoShouldBuy) {
+          recordLottoTickets = [];
+          lottoStatus = 'skipped';
+        }
+        if (!decision.pensionShouldBuy) {
+          recordPensionTickets = [];
+          pensionStatus = 'skipped';
+        }
+      }
+      return { lottoTickets: recordLottoTickets, pensionTickets: recordPensionTickets };
     });
+    if (decision && !decision.lottoShouldBuy && !decision.pensionShouldBuy) {
+      await notifyDecision('buy skipped', decision);
+      return;
+    }
     receipts = result.receipts;
   }
 

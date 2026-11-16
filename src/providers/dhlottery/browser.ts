@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import type { APIRequestContext } from 'playwright';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
 import { loginForHistory } from './history-login.ts';
 import { runPurchaseBatch, type PurchaseProduct } from './purchase-run.ts';
@@ -19,8 +20,9 @@ export interface BrowserArtifacts {
 }
 
 export class BrowserDhlotteryProvider {
-  async smoke(input: BrowserInput): Promise<BrowserArtifacts> {
-    return runBrowserFlow('smoke', input, async ({ page }) => {
+  async smoke(input: BrowserInput, beforeScreens?: (request: APIRequestContext) => Promise<void>): Promise<BrowserArtifacts> {
+    return runBrowserFlow('smoke', input, async ({ page, request }) => {
+      if (beforeScreens) await beforeScreens(request);
       const details = [`mode=smoke`, `week=${input.week}`];
       for (const product of requestedProducts(input)) {
         await withPurchaseWindow(page, product, async () => undefined).catch((error) => {
@@ -32,17 +34,21 @@ export class BrowserDhlotteryProvider {
     });
   }
 
-  async purchase(input: BrowserInput & { lottoRound: number; pensionRound: number }): Promise<BrowserArtifacts & {
+  async purchase(
+    input: BrowserInput & { lottoRound: number; pensionRound: number },
+    prepare: (request: APIRequestContext) => Promise<Pick<BrowserInput, 'lottoTickets' | 'pensionTickets'>>,
+  ): Promise<BrowserArtifacts & {
     receipts: Partial<Record<PurchaseProduct, string>>;
   }> {
     if (input.lottoTickets.length > 5 || input.pensionTickets.length > 1) {
       throw new Error('Requested purchase count exceeds the configured product limits');
     }
-    return runBrowserFlow('purchase', input, async ({ page }) => {
-      const receipts = await runPurchaseBatch(requestedProducts(input), (product, setStage) =>
+    return runBrowserFlow('purchase', input, async ({ page, request }) => {
+      const selection = { ...input, ...await prepare(request) };
+      const receipts = await runPurchaseBatch(requestedProducts(selection), (product, setStage) =>
         withPurchaseWindow(page, product, (frame, allowConfirmation, checkDialog) => product === 'lotto'
-          ? buyLottoOnScreen(frame, input.lottoTickets, input.lottoRound, setStage, checkDialog)
-          : buyPensionOnScreen(frame, input.pensionTickets[0], input.pensionRound, setStage, allowConfirmation, checkDialog)));
+          ? buyLottoOnScreen(frame, selection.lottoTickets, input.lottoRound, setStage, checkDialog)
+          : buyPensionOnScreen(frame, selection.pensionTickets[0], input.pensionRound, setStage, allowConfirmation, checkDialog)));
       return {
         receipts,
         details: [`mode=live`, `week=${input.week}`, ...Object.keys(receipts).map((product) => `${product}=confirmed`)],
@@ -61,7 +67,7 @@ function requestedProducts(input: BrowserInput): PurchaseProduct[] {
 async function runBrowserFlow<T extends { details: string[] }>(
   mode: 'smoke' | 'purchase',
   input: BrowserInput,
-  action: (session: Pick<Awaited<ReturnType<typeof createBrowserSession>>, 'page'>) => Promise<T>,
+  action: (session: Pick<Awaited<ReturnType<typeof createBrowserSession>>, 'page'> & { request: APIRequestContext }) => Promise<T>,
 ): Promise<BrowserArtifacts & Omit<T, 'details'>> {
   await mkdir('artifacts/diagnostics', { recursive: true });
   const { browser, context, page } = await createBrowserSession();
@@ -71,8 +77,8 @@ async function runBrowserFlow<T extends { details: string[] }>(
   try {
     // BrowserContext.request and the purchase pages share the session cookies.
     await loginForHistory(context.request, input.username, input.password);
-    stage = 'purchase screens';
-    const { details, ...result } = await action({ page });
+    stage = 'preflight or purchase screens';
+    const { details, ...result } = await action({ page, request: context.request });
     await writeDiagnostics(diagnosticsPath, details).catch(() => console.warn('Could not save purchase diagnostics'));
     return { ...result, diagnosticsPath };
   } catch (error) {

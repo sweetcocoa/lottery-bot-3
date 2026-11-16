@@ -77,7 +77,8 @@ function pensionFixture(outcome: 'closed' | 'number-only' | 'success' | 'wrong-p
 test('purchase browser fixtures isolate both windows and never treat an order number as a receipt', {
   skip: process.env.RUN_PURCHASE_FIXTURES !== '1', timeout: 45000,
 }, async () => {
-  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  const executablePath = process.env.PURCHASE_FIXTURE_CHROME;
+  const browser = await chromium.launch({ ...(executablePath ? { executablePath } : { channel: 'chrome' }), headless: true });
   try {
     const context = await browser.newContext({ serviceWorkers: 'block' });
     const submissions: string[] = [];

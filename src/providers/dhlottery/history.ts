@@ -1,11 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { createBrowserSession } from './session.ts';
+import { request, type APIRequestContext } from 'playwright';
 import { loginForHistory } from './history-login.ts';
-import { collectLedgerPages, ledgerPageInfo } from './ledger-response.ts';
+import { createLedgerReader, ledgerDates, readLedgerEntries, type LedgerRead } from './ledger-client.ts';
 import { fetchLottoResult, fetchPensionResult, isResultNotPublishedError } from '../results/fetcher.ts';
 
-const LEDGER_URL = 'https://www.dhlottery.co.kr/mypage/mylotteryledger';
-const LEDGER_READY_TIMEOUT = 15000;
 export interface UnsettledPurchasePresence {
   lottoUnsettled: boolean;
   pensionUnsettled: boolean;
@@ -13,57 +11,57 @@ export interface UnsettledPurchasePresence {
   pensionRound: number | null;
 }
 
-interface LedgerEntry {
-  index: number;
-  productCode: string;
-  productName: string;
-  round: number;
-  numberText: string;
-  purchaseCount: number;
-  purchaseDate: string;
-  drawDate: string;
+interface ProductChecks {
+  checkLotto?: boolean;
+  checkPension?: boolean;
 }
 
 export class DhlotteryHistoryProvider {
-  async loadUnsettledPurchasePresence(input: {
+  async loadUnsettledPurchasePresence(input: ProductChecks & {
     username: string;
     password: string;
-    checkLotto?: boolean;
-    checkPension?: boolean;
   }): Promise<UnsettledPurchasePresence> {
-    const { browser, page } = await createBrowserSession();
-    let latestRounds;
-    const range = getBuyHistoryRange();
+    const session = await request.newContext({ extraHTTPHeaders: { 'Accept-Language': 'ko-KR,ko;q=0.9' } });
     try {
-      await loginForHistory(page.context().request, input.username, input.password);
-      const firstPage = await openLedgerPage(page, range.startDate, range.endDate);
-      const entries = await collectLedgerPages({ rows: await loadLedgerEntries(page), total: firstPage.total }, async (pageNumber) => {
-        const nextPage = await searchLedgerPage(page, range.startDate, range.endDate, pageNumber);
-        return { rows: await loadLedgerEntries(page), total: nextPage.total };
-      });
-      latestRounds = resolveLatestProductRounds(entries);
-    } catch (error) {
-      await mkdir('artifacts/diagnostics', { recursive: true });
-      const reason = error instanceof Error ? error.message : String(error);
-      await writeDiagnostics('artifacts/diagnostics/buy-preflight.txt', [
-        `currentUrl=${page.url()}`,
-        `searchStart=${range.startDate}`,
-        `searchEnd=${range.endDate}`,
-        `error=${reason}`,
-      ]);
-      throw error;
+      await loginForHistory(session, input.username, input.password);
+      return await readUnsettledPurchasePresence(session, input);
     } finally {
-      await browser.close();
+      await session.dispose().catch(() => console.warn('Could not close purchase history session'));
     }
-
-    return resolveUnsettledPurchasePresence({
-      lottoRound: latestRounds.lottoRound,
-      pensionRound: latestRounds.pensionRound,
-      checkLotto: input.checkLotto,
-      checkPension: input.checkPension,
-    });
   }
+}
 
+export async function readUnsettledPurchasePresence(
+  session: APIRequestContext,
+  checks: ProductChecks,
+): Promise<UnsettledPurchasePresence> {
+  const range = getBuyHistoryRange();
+  try {
+    const rounds = await readRecentProductRounds(createLedgerReader(session), range);
+    return await resolveUnsettledPurchasePresence({ ...rounds, ...checks });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await mkdir('artifacts/diagnostics', { recursive: true })
+      .then(() => writeFile('artifacts/diagnostics/buy-preflight.txt',
+        `searchStart=${range.startDate}\nsearchEnd=${range.endDate}\nerror=${reason}\n`, 'utf8'))
+      .catch(() => console.warn('Could not write purchase preflight diagnostics'));
+    throw new Error(`Purchase preflight failed: ${reason}`, { cause: error });
+  }
+}
+
+export async function readRecentProductRounds(read: LedgerRead, range: ReturnType<typeof getBuyHistoryRange>) {
+  const rows = await readLedgerEntries(read, ledgerDates(range.startDate, range.endDate));
+  return resolveLatestProductRounds(rows.flatMap((entry) => {
+    const row = entry as { ltGdsCd?: unknown; ltEpsd?: unknown } | null;
+    const productCode = row?.ltGdsCd;
+    if (typeof productCode !== 'string' || !productCode) throw new Error('Purchase history row is missing its product code');
+    if (productCode !== 'LO40' && productCode !== 'LP72') return [];
+    const round = row?.ltEpsd;
+    if (typeof round !== 'number' || !Number.isSafeInteger(round) || round < 1) {
+      throw new Error(`Purchase history row for ${productCode} has an invalid draw round`);
+    }
+    return [{ productCode, round }];
+  }));
 }
 
 export function resolveLatestProductRounds(entries: Array<{ productCode: string; round: number }>): { lottoRound: number | null; pensionRound: number | null } {
@@ -111,10 +109,6 @@ export async function resolveUnsettledPurchasePresence(input: {
   };
 }
 
-async function writeDiagnostics(path: string, lines: string[]): Promise<void> {
-  await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
-}
-
 function currentKstDate(date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Seoul',
@@ -133,93 +127,6 @@ function shiftIsoDate(value: string, days: number): string {
   const date = new Date(`${value}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
-}
-
-async function openLedgerPage(page: any, startDate: string, endDate: string): Promise<{ rowCount: number; total: number }> {
-  let stage = 'page navigation';
-  try {
-    await page.goto(LEDGER_URL, { waitUntil: 'domcontentloaded', timeout: LEDGER_READY_TIMEOUT });
-    stage = 'search controls';
-    await page.waitForFunction(
-      () => typeof (window as any).MyLotteryledgerM?.fn_selectMyLotteryledger === 'function',
-      null,
-      { timeout: LEDGER_READY_TIMEOUT },
-    );
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Purchase history ${stage} failed for ${startDate}..${endDate}: ${reason}`, { cause: error });
-  }
-  return searchLedgerPage(page, startDate, endDate, 1);
-}
-
-async function searchLedgerPage(page: any, startDate: string, endDate: string, pageNumber: number): Promise<{ rowCount: number; total: number }> {
-  let stage = 'search response';
-  try {
-    const responsePromise = page.waitForResponse((response: any) => {
-      const url = new URL(response.url());
-      return url.pathname.endsWith('/selectMyLotteryledger.do')
-        && url.searchParams.get('srchStrDt') === startDate.replaceAll('-', '')
-        && url.searchParams.get('srchEndDt') === endDate.replaceAll('-', '')
-        && url.searchParams.get('pageNum') === String(pageNumber);
-    }, { timeout: LEDGER_READY_TIMEOUT });
-    const [response] = await Promise.all([responsePromise, page.evaluate(({ startDate, endDate, pageNumber }) => {
-      const startInput = document.querySelector('#srchStrDt') as HTMLInputElement | null;
-      const endInput = document.querySelector('#srchEndDt') as HTMLInputElement | null;
-      const goodsSelect = document.querySelector('#ltGdsSelect') as HTMLSelectElement | null;
-      if (!startInput || !endInput || !goodsSelect) {
-        throw new Error('Purchase history search controls are missing');
-      }
-      startInput.value = startDate;
-      endInput.value = endDate;
-      goodsSelect.value = '';
-      // Clear the initial list so the wait observes this search's callback.
-      // @ts-ignore
-      MyLotteryledgerM.list = null;
-      // @ts-ignore
-      MyLotteryledgerM.fn_selectMyLotteryledger(pageNumber);
-    }, { startDate, endDate, pageNumber })]);
-    const info = ledgerPageInfo(await response.json(), response.status());
-    stage = 'search rendering';
-    await page.waitForFunction(
-      (expected: number) => Array.isArray((window as any).MyLotteryledgerM?.list)
-        && (window as any).MyLotteryledgerM.list.length === expected
-        && document.querySelectorAll('.whl-body .whl-row').length === expected,
-      info.rowCount,
-      { timeout: LEDGER_READY_TIMEOUT },
-    );
-    return info;
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Purchase history ${stage} failed for ${startDate}..${endDate}: ${reason}`, { cause: error });
-  }
-}
-
-async function loadLedgerEntries(page: any): Promise<LedgerEntry[]> {
-  return page.evaluate(() => {
-    const rows = Array.from(document.querySelectorAll('.whl-body .whl-row'));
-    return rows.map((row) => {
-      const getField = (selector: string) => {
-        return (row.querySelector(selector)?.textContent || '').replace(/\s+/g, ' ').trim();
-      };
-      const barcode = row.querySelector('.barcd') as HTMLElement | null;
-      return {
-        index: Number(barcode?.dataset.index || '-1'),
-        productCode: getProductCode(getField('.col-name .whl-txt')),
-        productName: getField('.col-name .whl-txt'),
-        round: Number(getField('.col-th .whl-txt')),
-        numberText: getField('.col-num .whl-txt'),
-        purchaseCount: Number(getField('.col-ea .whl-txt') || '0'),
-        purchaseDate: getField('.col-date1 .whl-txt'),
-        drawDate: getField('.col-date2 .whl-txt'),
-      };
-    });
-
-    function getProductCode(name: string): string {
-      if (name === '로또6/45') return 'LO40';
-      if (name === '연금복권720+') return 'LP72';
-      return '';
-    }
-  });
 }
 
 async function isRoundUnsettled(

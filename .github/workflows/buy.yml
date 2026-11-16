@@ -67,7 +67,7 @@ jobs:
         run: npm ci --no-fund --no-audit
 
       - name: Verify system Chrome
-        if: ${{ github.event_name == 'schedule' || inputs.mode == 'smoke' || inputs.mode == 'live-check' || inputs.mode == 'live' || inputs.mode == 'diagnose' }}
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'smoke' || inputs.mode == 'live' || (inputs.mode == 'diagnose' && inputs.check_screens) }}
         run: |
           test -d "/Applications/Google Chrome.app"
           "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
@@ -85,19 +85,13 @@ jobs:
             --product=${BUY_PRODUCT} \
             --force=${BUY_FORCE} 2>&1 | tee artifacts/diagnostics/buy-command.log
 
-      - name: Diagnose buy preflight without purchases or notifications
+      - name: Diagnose buy preflight and optional screens without submitting tickets
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnose' }}
         env:
           TELEGRAM_BOT_TOKEN: ''
           TELEGRAM_CHAT_ID: ''
+          BUY_CHECK_SCREENS: ${{ inputs.check_screens }}
         run: node --experimental-strip-types src/scripts/diagnose-buy.ts
-
-      - name: Diagnose authenticated purchase screens without submitting tickets
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnose' && inputs.check_screens }}
-        env:
-          TELEGRAM_BOT_TOKEN: ''
-          TELEGRAM_CHAT_ID: ''
-        run: node --experimental-strip-types src/cli.ts buy --mode=smoke --product=all
 
       - name: Upload diagnostics
         if: ${{ failure() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'live-check' || inputs.mode == 'smoke') }}

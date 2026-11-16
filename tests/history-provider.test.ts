@@ -3,9 +3,29 @@ import assert from 'node:assert/strict';
 import { ResultNotPublishedError } from '../src/providers/results/fetcher.ts';
 import {
   getBuyHistoryRange,
+  readRecentProductRounds,
   resolveLatestProductRounds,
   resolveUnsettledPurchasePresence,
 } from '../src/providers/dhlottery/history.ts';
+
+test('preflight reads every HTTP ledger page and fails on malformed target-product rounds', async () => {
+  const range = { startDate: '2026-10-17', endDate: '2026-11-16' };
+  const seen: string[] = [];
+  const rounds = await readRecentProductRounds(async (path, params) => {
+    assert.equal(path, '/mypage/selectMyLotteryledger.do');
+    assert.equal(params.srchStrDt, '20261017');
+    assert.equal(params.srchEndDt, '20261116');
+    seen.push(params.pageNum);
+    return { data: { total: 11, list: params.pageNum === '1'
+      ? Array.from({ length: 10 }, () => ({ ltGdsCd: 'LO40', ltEpsd: 1250 }))
+      : [{ ltGdsCd: 'LP72', ltEpsd: 341 }] } };
+  }, range);
+  assert.deepEqual(seen, ['1', '2']);
+  assert.deepEqual(rounds, { lottoRound: 1250, pensionRound: 341 });
+  await assert.rejects(readRecentProductRounds(async () => ({
+    data: { total: 1, list: [{ ltGdsCd: 'LO40', ltEpsd: null }] },
+  }), range), /invalid draw round/);
+});
 
 test('buy preflight searches only the recent 30 days in KST', () => {
   assert.deepEqual(getBuyHistoryRange(new Date('2026-09-28T04:00:00Z')), { startDate: '2026-08-29', endDate: '2026-09-28' });

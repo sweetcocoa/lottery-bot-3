@@ -2,23 +2,14 @@ import { request } from 'playwright';
 import type { AppConfig } from '../../config/schema.ts';
 import type { PurchaseRecord } from '../../core/purchase-record.ts';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
-import { getHistoryPage, HISTORY_ORIGIN, loginForHistory } from './history-login.ts';
-import { collectLedgerPages, parseLedgerPage } from './ledger-response.ts';
+import { loginForHistory } from './history-login.ts';
+import { createLedgerReader, ledgerDates, readLedgerEntries, type LedgerRead } from './ledger-client.ts';
 
 interface DrawWeek {
   week: string;
   weekStartDate: string;
   weekEndDate: string;
 }
-
-const LEDGER_PATH = '/mypage/mylotteryledger';
-const LEDGER_HEADERS = {
-  AJAX: 'true',
-  requestMenuUri: LEDGER_PATH,
-  referer: `${HISTORY_ORIGIN}${LEDGER_PATH}`,
-};
-
-type LedgerRead = (path: string, params: Record<string, string>, stage: string) => Promise<unknown>;
 
 export async function loadWeeklyPurchaseRecord(input: DrawWeek & {
   username: string;
@@ -30,19 +21,7 @@ export async function loadWeeklyPurchaseRecord(input: DrawWeek & {
   try {
     await loginForHistory(session, input.username, input.password);
     stage = 'ledger';
-    const record = await readWeeklyPurchaseRecord(input, input.config, async (path, params, description) => {
-      const query = new URLSearchParams(params);
-      const response = await getHistoryPage(session, `${path}?${query}`, description, {
-        headers: LEDGER_HEADERS,
-        maxRedirects: 0,
-      });
-      try {
-        if (response.status() !== 200) throw new Error(`${description} returned HTTP ${response.status()}`);
-        return await response.json().catch(() => { throw new Error(`${description} returned invalid JSON`); });
-      } finally {
-        await response.dispose().catch(() => undefined);
-      }
-    });
+    const record = await readWeeklyPurchaseRecord(input, input.config, createLedgerReader(session));
     console.log(`Purchase history ${input.week}: lotto=${record.lotto.count}, pension=${record.pension.count}`);
     return record;
   } catch (error) {
@@ -56,21 +35,8 @@ export async function loadWeeklyPurchaseRecord(input: DrawWeek & {
 export async function readWeeklyPurchaseRecord(week: DrawWeek, config: AppConfig, read: LedgerRead): Promise<PurchaseRecord> {
   const searchStart = new Date(`${week.weekStartDate}T00:00:00Z`);
   searchStart.setUTCDate(searchStart.getUTCDate() - 7);
-  const dates = {
-    srchStrDt: searchStart.toISOString().slice(0, 10).replaceAll('-', ''),
-    srchEndDt: week.weekEndDate.replaceAll('-', ''),
-  };
-  const readPage = async (pageNumber: number) => parseLedgerPage(await read('/mypage/selectMyLotteryledger.do', {
-    ...dates,
-    sort: '',
-    ltGdsCd: '',
-    winResult: '',
-    lramSmam: '',
-    pageNum: String(pageNumber),
-    recordCountPerPage: '10',
-  }, `Purchase history page ${pageNumber}`), 200);
-
-  const entries = await collectLedgerPages(await readPage(1), readPage);
+  const dates = ledgerDates(searchStart.toISOString().slice(0, 10), week.weekEndDate);
+  const entries = await readLedgerEntries(read, dates);
   const lottoTickets: LottoTicket[] = [];
   const pensionTickets: PensionTicket[] = [];
   let lottoRound = 0;
