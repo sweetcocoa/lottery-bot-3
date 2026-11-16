@@ -30,6 +30,11 @@ on:
         required: false
         default: false
         type: boolean
+      check_screens:
+        description: Also open purchase screens in diagnose mode without selecting or submitting tickets
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: buy-lottery
@@ -86,6 +91,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ''
           TELEGRAM_CHAT_ID: ''
         run: node --experimental-strip-types src/scripts/diagnose-buy.ts
+
+      - name: Diagnose authenticated purchase screens without submitting tickets
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnose' && inputs.check_screens }}
+        env:
+          TELEGRAM_BOT_TOKEN: ''
+          TELEGRAM_CHAT_ID: ''
+        run: node --experimental-strip-types src/cli.ts buy --mode=smoke --product=all
 
       - name: Upload diagnostics
         if: ${{ failure() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'live-check' || inputs.mode == 'smoke') }}

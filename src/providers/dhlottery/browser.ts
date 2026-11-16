@@ -1,9 +1,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { LottoTicket, PensionTicket } from '../../core/random-picks.ts';
+import { loginForHistory } from './history-login.ts';
 import { runPurchaseBatch, type PurchaseProduct } from './purchase-run.ts';
 import { buyLottoOnScreen, buyPensionOnScreen } from './purchase-screen.ts';
 import { withPurchaseWindow } from './purchase-window.ts';
-import { createBrowserSession, login } from './session.ts';
+import { createBrowserSession } from './session.ts';
 
 interface BrowserInput {
   username: string;
@@ -20,10 +21,11 @@ export interface BrowserArtifacts {
 export class BrowserDhlotteryProvider {
   async smoke(input: BrowserInput): Promise<BrowserArtifacts> {
     return runBrowserFlow('smoke', input, async ({ page }) => {
-      await login(page, input.username, input.password);
       const details = [`mode=smoke`, `week=${input.week}`];
       for (const product of requestedProducts(input)) {
-        await withPurchaseWindow(page, product, async () => undefined);
+        await withPurchaseWindow(page, product, async () => undefined).catch((error) => {
+          throw new Error(`Could not open ${product} purchase screen: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        });
         details.push(`${product}Ready=true`);
       }
       return { details };
@@ -37,7 +39,6 @@ export class BrowserDhlotteryProvider {
       throw new Error('Requested purchase count exceeds the configured product limits');
     }
     return runBrowserFlow('purchase', input, async ({ page }) => {
-      await login(page, input.username, input.password);
       const receipts = await runPurchaseBatch(requestedProducts(input), (product, setStage) =>
         withPurchaseWindow(page, product, (frame, allowConfirmation, checkDialog) => product === 'lotto'
           ? buyLottoOnScreen(frame, input.lottoTickets, input.lottoRound, setStage, checkDialog)
@@ -60,13 +61,17 @@ function requestedProducts(input: BrowserInput): PurchaseProduct[] {
 async function runBrowserFlow<T extends { details: string[] }>(
   mode: 'smoke' | 'purchase',
   input: BrowserInput,
-  action: (session: { page: any }) => Promise<T>,
+  action: (session: Pick<Awaited<ReturnType<typeof createBrowserSession>>, 'page'>) => Promise<T>,
 ): Promise<BrowserArtifacts & Omit<T, 'details'>> {
   await mkdir('artifacts/diagnostics', { recursive: true });
-  const { browser, page } = await createBrowserSession();
+  const { browser, context, page } = await createBrowserSession();
   const diagnosticsPath = `artifacts/diagnostics/browser-${mode}-${input.week}.txt`;
 
+  let stage = 'authentication';
   try {
+    // BrowserContext.request and the purchase pages share the session cookies.
+    await loginForHistory(context.request, input.username, input.password);
+    stage = 'purchase screens';
     const { details, ...result } = await action({ page });
     await writeDiagnostics(diagnosticsPath, details).catch(() => console.warn('Could not save purchase diagnostics'));
     return { ...result, diagnosticsPath };
@@ -74,6 +79,7 @@ async function runBrowserFlow<T extends { details: string[] }>(
     await writeDiagnostics(diagnosticsPath, [
       `mode=${mode}`,
       `week=${input.week}`,
+      `stage=${stage}`,
       `pageClosed=${page.isClosed()}`,
       `error=${error instanceof Error ? error.message : String(error)}`,
     ]).catch(() => console.warn('Could not save purchase failure diagnostics'));

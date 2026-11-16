@@ -14,7 +14,7 @@ function response(status: number, body: unknown, location?: string) {
   };
 }
 
-test('history login establishes and verifies an authenticated session without rendering the login page', async () => {
+test('login verifies the authenticated session even when the redirect is still under /login', async () => {
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const jwk = publicKey.export({ format: 'jwk' });
   const seen: string[] = [];
@@ -42,7 +42,7 @@ test('history login establishes and verifies an authenticated session without re
       const decrypt = (value: string) => privateDecrypt({ key: privateKey, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(value, 'hex')).toString();
       assert.equal(decrypt(options.form.userId), 'test-user');
       assert.equal(decrypt(options.form.userPswdEncn), 'test-password');
-      return response(302, '', '/main');
+      return response(302, '', '/login/loginSuccess.do?returnUrl=/main');
     },
   };
 
