@@ -19,7 +19,7 @@ node --experimental-strip-types src/cli.ts summarize --mode=dry-run --purchase-s
 
 ## 로컬 구매 검증
 
-구매 workflow는 GitHub-hosted `macos-15` runner를 기준으로 동작한다. `act`로 동일 runner를 재현하지 않고, 로컬에서는 runner-native smoke 검증을 사용한다.
+구매 workflow는 GitHub-hosted `ubuntu-24.04` 러너에서 동작한다. 로컬에서는 `scripts/local/buy-ci-fixtures.sh`로 모의 브라우저 테스트와 dry-run을 수행할 수 있다.
 
 Playwright 브라우저가 아직 없으면 먼저 설치한다.
 
@@ -76,7 +76,7 @@ node --experimental-strip-types src/cli.ts summarize --mode=live
 ## GitHub Actions 운영
 
 - `buy.yml`
-  - runner: `macos-15`
+  - runner: `ubuntu-24.04`
   - schedule: 매주 월요일 09:00 KST
   - manual mode: `dry-run`, `smoke`, `live-check`, `live`
   - manual product: `all`, `lotto`, `pension`
@@ -116,7 +116,7 @@ node --experimental-strip-types src/cli.ts summarize --mode=live
 - `live-check`는 로그인과 구매내역/결과 조회만 수행하고 실제 구매는 하지 않는다.
 - `buy.yml`의 `diagnose`는 구매 전 내역 확인만 수행하고 구매 및 알림 발송을 하지 않는다.
 - `diagnose`에서 `check_screens`를 켜면 두 상품의 화면이 열리는지도 확인한다. 번호 선택과 구매 제출은 하지 않는다.
-- `diagnostic_runner`는 진단 모드에서만 적용된다. 기본 Intel macOS와 Ubuntu의 사이트 접속과 화면 진입을 같은 진단으로 비교할 수 있다.
+- `diagnostic_runner`는 진단 모드에서만 적용된다. 기본 Ubuntu와 Intel macOS의 사이트 접속과 화면 진입을 같은 진단으로 비교할 수 있다.
 - 구매 전 조회는 사이트의 최대 3개월 제한 안에서 최근 30일의 모든 페이지를 확인한다. 서버 오류나 누락이 있으면 구매를 중단한다.
 - 실제 구매의 사전 조회는 결과 확인과 같은 HTTP 구매내역을 읽으며, 그 인증 세션을 구매 화면에도 사용한다.
 - `live`만 실제 번호 선택과 구매 확정을 수행한다.
