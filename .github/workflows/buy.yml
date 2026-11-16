@@ -85,6 +85,17 @@ jobs:
       - name: Ensure artifacts dir
         run: mkdir -p artifacts/diagnostics
 
+      - name: Verify checkout with local browser fixtures
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnose' && inputs.check_screens }}
+        timeout-minutes: 3
+        env:
+          DHLOTTERY_USERNAME: ''
+          DHLOTTERY_PASSWORD: ''
+          TELEGRAM_BOT_TOKEN: ''
+          TELEGRAM_CHAT_ID: ''
+          RUN_PURCHASE_FIXTURES: '1'
+        run: node --experimental-strip-types --test tests/purchase-screen.test.ts
+
       - name: Run buy command
         id: run_buy
         if: ${{ github.event_name == 'schedule' || inputs.mode != 'diagnose' }}
