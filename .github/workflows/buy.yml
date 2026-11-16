@@ -35,6 +35,13 @@ on:
         required: false
         default: false
         type: boolean
+      diagnostic_runner:
+        description: Runner used only in diagnose mode
+        type: choice
+        default: macos-15-intel
+        options:
+          - macos-15-intel
+          - ubuntu-24.04
 
 concurrency:
   group: buy-lottery
@@ -42,7 +49,7 @@ concurrency:
 
 jobs:
   buy:
-    runs-on: macos-15-intel
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnose' && inputs.diagnostic_runner == 'ubuntu-24.04' && 'ubuntu-24.04' || 'macos-15-intel' }}
     permissions:
       actions: read
       contents: read
@@ -69,8 +76,11 @@ jobs:
       - name: Verify system Chrome
         if: ${{ github.event_name == 'schedule' || inputs.mode == 'smoke' || inputs.mode == 'live' || (inputs.mode == 'diagnose' && inputs.check_screens) }}
         run: |
-          test -d "/Applications/Google Chrome.app"
-          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            google-chrome --version
+          else
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
+          fi
 
       - name: Ensure artifacts dir
         run: mkdir -p artifacts/diagnostics
@@ -91,10 +101,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ''
           TELEGRAM_CHAT_ID: ''
           BUY_CHECK_SCREENS: ${{ inputs.check_screens }}
-        run: node --experimental-strip-types src/scripts/diagnose-buy.ts
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          node --experimental-strip-types src/scripts/diagnose-buy.ts 2>&1 | tee artifacts/diagnostics/buy-diagnose.log
 
       - name: Upload diagnostics
-        if: ${{ failure() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'live-check' || inputs.mode == 'smoke') }}
+        if: ${{ failure() && (github.event_name == 'schedule' || inputs.mode == 'live' || inputs.mode == 'live-check' || inputs.mode == 'smoke' || inputs.mode == 'diagnose') }}
         uses: actions/upload-artifact@v4
         with:
           name: buy-diagnostics-${{ github.run_id }}
